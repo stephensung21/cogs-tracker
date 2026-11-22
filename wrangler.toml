@@ -1,0 +1,22 @@
+name = "cogs-tracker"
+main = "src/index.tsx"
+compatibility_date = "2026-10-01"
+
+# Runs the catch-up sync once a day (UTC) in case a webhook was missed.
+[triggers]
+crons = ["17 19 * * *"]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "cogs-tracker"
+# Replace with the id printed by `npx wrangler d1 create cogs-tracker`
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[vars]
+UP_API_BASE = "https://api.up.com.au/api/v1"
+
+# Secrets (set with `npx wrangler secret put <NAME>`, or in .dev.vars locally):
+#   UP_TOKEN        - Up Personal Access Token of the account owner
+#   APP_PASSWORD    - password for logging in to the dashboard
+#   SESSION_SECRET  - long random string used to sign the login cookie

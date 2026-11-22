@@ -1,0 +1,32 @@
+{
+  "name": "cogs-tracker",
+  "version": "1.0.0",
+  "description": "Tracks roommate bill payments into an Up Bank account",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply cogs-tracker --local",
+    "db:migrate:remote": "wrangler d1 migrations apply cogs-tracker --remote",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/stephensung21/cogs-tracker.git"
+  },
+  "bugs": {
+    "url": "https://github.com/stephensung21/cogs-tracker/issues"
+  },
+  "homepage": "https://github.com/stephensung21/cogs-tracker#readme",
+  "dependencies": {
+    "hono": "^4.13.20"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261121.1",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1",
+    "wrangler": "^4.166.0"
+  },
+  "private": true,
+  "type": "module"
+}
