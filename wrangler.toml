@@ -18,5 +18,6 @@ UP_API_BASE = "https://api.up.com.au/api/v1"
 
 # Secrets (set with `npx wrangler secret put <NAME>`, or in .dev.vars locally):
 #   UP_TOKEN        - Up Personal Access Token of the account owner
-#   APP_PASSWORD    - password for logging in to the dashboard
+#   ADMIN_PASSWORD  - password for the admin (cogs): full access
+#   VIEWER_PASSWORD - password for the roommate: view only (optional)
 #   SESSION_SECRET  - long random string used to sign the login cookie

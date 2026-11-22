@@ -1,4 +1,4 @@
-# Cogs Bills
+# cogs.bills
 
 A small website that tracks a roommate's bill payments into an Up Bank Saver.
 
@@ -8,6 +8,18 @@ A small website that tracks a roommate's bill payments into an Up Bank Saver.
 - Anything that doesn't match (typos, the owner's own top-ups) lands on the **Unmatched** page to assign by hand.
 
 Runs on Cloudflare Workers (Hono) with a D1 (SQLite) database, all on the free plan.
+
+## Logins
+
+| | Admin (`ADMIN_PASSWORD`) | Viewer (`VIEWER_PASSWORD`) |
+| --- | --- | --- |
+| See bills, progress bars and payments | yes | yes |
+| Copy a bill's reference code | yes | yes |
+| Add / edit / archive / delete bills | yes | no |
+| Unmatched payments, Sync, Setup | yes | no |
+
+The role is stored in a signed, http-only cookie (30 days) and checked on the server for every admin
+route, so the viewer can't get around it by guessing URLs. Removing `VIEWER_PASSWORD` logs the viewer out.
 
 ## How matching works
 
@@ -36,7 +48,8 @@ npm run db:migrate:remote
 
 # 2. Secrets
 npx wrangler secret put UP_TOKEN        # Personal Access Token from https://api.up.com.au
-npx wrangler secret put APP_PASSWORD    # password for the dashboard
+npx wrangler secret put ADMIN_PASSWORD  # cogs's password: full access
+npx wrangler secret put VIEWER_PASSWORD # roommate's password: view only (optional)
 npx wrangler secret put SESSION_SECRET  # any long random string, e.g. `openssl rand -hex 32`
 
 # 3. Deploy
@@ -60,7 +73,7 @@ A daily cron (see `wrangler.toml`) re-syncs the last 14 days in case a webhook w
    dashboard under Workers → cogs-tracker → Settings → Variables and secrets.
 3. On Setup: pick his bills Saver (this deletes your test transactions; bills are kept), register the webhook,
    ping it, and sync.
-4. Change `APP_PASSWORD` if you want a password only you two know.
+4. Change `ADMIN_PASSWORD` so only cogs knows it, and set `VIEWER_PASSWORD` for the roommate.
 
 The Up token can **read every account and transaction** cogs has. It only lives in Cloudflare secrets and is
 never sent to the browser. Only transactions from the chosen Saver are stored.
@@ -86,7 +99,8 @@ src/sync.ts     webhook handling and sync
 src/up.ts       Up API client and signature check
 src/matching.ts reference to bill matching, money helpers (pure, unit-tested)
 src/db.ts       D1 queries
-src/views.tsx   HTML pages (server-rendered, no frontend framework)
-src/auth.ts     password login with a signed cookie
+src/views.tsx   HTML pages and styles (server-rendered, no frontend framework)
+src/art.tsx     logo, bill icons, illustrations, avatars (inline SVG)
+src/auth.ts     admin / viewer password login with a signed cookie
 migrations/     database schema
 ```

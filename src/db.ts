@@ -4,7 +4,8 @@ import type { UpTransaction } from "./up";
 export interface Env {
   DB: D1Database;
   UP_TOKEN: string;
-  APP_PASSWORD: string;
+  ADMIN_PASSWORD: string;
+  VIEWER_PASSWORD?: string;
   SESSION_SECRET: string;
   UP_API_BASE?: string;
 }
@@ -44,6 +45,7 @@ export interface Bill {
   code: string;
   amount_due: number;
   due_date: string | null;
+  icon: string | null;
   archived: number;
   created_at: string;
 }
@@ -53,6 +55,7 @@ export interface BillWithTotals extends Bill {
   paid_out: number;
   paid_at: string | null;
   payments: number;
+  payers: string | null; // comma-separated names of people who paid in
 }
 
 const BILL_TOTALS_SQL = `
@@ -60,7 +63,8 @@ const BILL_TOTALS_SQL = `
     COALESCE(SUM(CASE WHEN t.amount_cents > 0 THEN t.amount_cents END), 0)  AS collected,
     COALESCE(SUM(CASE WHEN t.amount_cents < 0 THEN -t.amount_cents END), 0) AS paid_out,
     MAX(CASE WHEN t.amount_cents < 0 THEN t.created_at END)                  AS paid_at,
-    COUNT(CASE WHEN t.amount_cents > 0 THEN 1 END)                           AS payments
+    COUNT(CASE WHEN t.amount_cents > 0 THEN 1 END)                           AS payments,
+    GROUP_CONCAT(DISTINCT CASE WHEN t.amount_cents > 0 THEN REPLACE(t.description, ',', ' ') END) AS payers
   FROM bills b
   LEFT JOIN transactions t ON t.bill_id = b.id
 `;
@@ -93,13 +97,21 @@ export async function codeInUse(db: D1Database, code: string, exceptId?: number)
   return r !== null;
 }
 
+export interface BillFields {
+  name: string;
+  code: string;
+  amount_due: number;
+  due_date: string | null;
+  icon: string | null;
+}
+
 export async function createBill(
   db: D1Database,
-  b: { name: string; code: string; amount_due: number; due_date: string | null },
+  b: BillFields,
 ): Promise<number> {
   const r = await db
-    .prepare("INSERT INTO bills (name, code, amount_due, due_date) VALUES (?, ?, ?, ?) RETURNING id")
-    .bind(b.name, b.code, b.amount_due, b.due_date)
+    .prepare("INSERT INTO bills (name, code, amount_due, due_date, icon) VALUES (?, ?, ?, ?, ?) RETURNING id")
+    .bind(b.name, b.code, b.amount_due, b.due_date, b.icon)
     .first<{ id: number }>();
   return r!.id;
 }
@@ -107,11 +119,11 @@ export async function createBill(
 export async function updateBill(
   db: D1Database,
   id: number,
-  b: { name: string; code: string; amount_due: number; due_date: string | null },
+  b: BillFields,
 ): Promise<void> {
   await db
-    .prepare("UPDATE bills SET name = ?, code = ?, amount_due = ?, due_date = ? WHERE id = ?")
-    .bind(b.name, b.code, b.amount_due, b.due_date, id)
+    .prepare("UPDATE bills SET name = ?, code = ?, amount_due = ?, due_date = ?, icon = ? WHERE id = ?")
+    .bind(b.name, b.code, b.amount_due, b.due_date, b.icon, id)
     .run();
 }
 

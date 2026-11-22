@@ -1,4 +1,5 @@
 UP_TOKEN=your-up-personal-access-token
-APP_PASSWORD=change-me
+ADMIN_PASSWORD=change-me
+VIEWER_PASSWORD=roommate-password
 SESSION_SECRET=any-long-random-string
 # UP_API_BASE=http://127.0.0.1:8799   # optional: point at a fake Up API

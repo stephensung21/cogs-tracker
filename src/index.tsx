@@ -1,5 +1,6 @@
 import { Hono } from "hono";
-import { checkPassword, endSession, requireLogin, startSession } from "./auth";
+import { LOGO_SVG, isBillIcon } from "./art";
+import { endSession, requireAdmin, requireLogin, roleForPassword, startSession, type AppEnv } from "./auth";
 import {
   assignTransaction,
   codeInUse,
@@ -32,7 +33,7 @@ import {
   TransactionsPage,
 } from "./views";
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<AppEnv>();
 
 const WEBHOOK_PATH = "/webhooks/up";
 
@@ -50,12 +51,17 @@ app.post(WEBHOOK_PATH, async (c) => {
   }
 });
 
+app.get("/favicon.svg", (c) =>
+  c.body(LOGO_SVG, 200, { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=86400" }),
+);
+
 app.get("/login", (c) => c.html(<LoginPage />));
 
 app.post("/login", async (c) => {
   const form = await c.req.parseBody();
-  if (await checkPassword(c.env, String(form.password ?? ""))) {
-    await startSession(c);
+  const role = await roleForPassword(c.env, String(form.password ?? ""));
+  if (role) {
+    await startSession(c, role);
     return c.redirect("/");
   }
   return c.html(<LoginPage error />, 401);
@@ -66,9 +72,14 @@ app.post("/logout", (c) => {
   return c.redirect("/login");
 });
 
-// ---------- everything below needs login ----------
+// ---------- everything below needs login; admin-only areas need the admin role ----------
 
 app.use("*", requireLogin);
+for (const path of ["/sync", "/bills/new", "/bills/:id/edit", "/bills/:id/archive", "/bills/:id/delete", "/transactions", "/transactions/*", "/setup", "/setup/*"]) {
+  app.use(path, requireAdmin);
+}
+app.post("/bills", requireAdmin);
+app.post("/bills/:id", requireAdmin);
 
 const flash = (c: { req: { query: (k: string) => string | undefined } }) => c.req.query("msg") ?? null;
 const withMsg = (path: string, msg: string) =>
@@ -82,7 +93,7 @@ app.get("/", async (c) => {
     getSetting(c.env.DB, "last_sync"),
   ]);
   return c.html(
-    <Dashboard bills={bills} unmatched={unmatched} accountName={accountName} lastSync={lastSync} flash={flash(c)} />,
+    <Dashboard role={c.get("role")} bills={bills} unmatched={unmatched} accountName={accountName} lastSync={lastSync} flash={flash(c)} />,
   );
 });
 
@@ -105,6 +116,7 @@ interface BillInput {
   code: string;
   amount: string;
   due_date: string;
+  icon: string;
 }
 
 async function validateBill(env: Env, f: BillInput, exceptId?: number) {
@@ -117,7 +129,8 @@ async function validateBill(env: Env, f: BillInput, exceptId?: number) {
   if (amount_due === null) return { error: "Amount should look like 120 or 120.50." };
   if (await codeInUse(env.DB, code, exceptId))
     return { error: `Another active bill already uses ${code}. Archive it first or pick a different code.` };
-  return { value: { name, code, amount_due, due_date } };
+  const icon = isBillIcon(f.icon) ? f.icon : null;
+  return { value: { name, code, amount_due, due_date, icon } };
 }
 
 async function readBillForm(c: { req: { parseBody: () => Promise<Record<string, unknown>> } }): Promise<BillInput> {
@@ -127,6 +140,7 @@ async function readBillForm(c: { req: { parseBody: () => Promise<Record<string, 
     code: String(f.code ?? ""),
     amount: String(f.amount ?? ""),
     due_date: String(f.due_date ?? ""),
+    icon: String(f.icon ?? ""),
   };
 }
 
@@ -143,14 +157,16 @@ app.post("/bills", async (c) => {
   );
 });
 
-app.get("/bills/archived", async (c) => c.html(<ArchivedPage bills={await listBills(c.env.DB, true)} />));
+app.get("/bills/archived", async (c) =>
+  c.html(<ArchivedPage role={c.get("role")} bills={await listBills(c.env.DB, true)} />),
+);
 
 app.get("/bills/:id", async (c) => {
   const id = Number(c.req.param("id"));
   const b = await getBill(c.env.DB, id);
   if (!b) return c.notFound();
   const txns = await listTransactions(c.env.DB, { billId: id });
-  return c.html(<BillDetail b={b} txns={txns} flash={flash(c)} />);
+  return c.html(<BillDetail role={c.get("role")} b={b} txns={txns} flash={flash(c)} />);
 });
 
 app.get("/bills/:id/edit", async (c) => {
@@ -158,7 +174,7 @@ app.get("/bills/:id/edit", async (c) => {
   if (!b) return c.notFound();
   return c.html(
     <BillForm
-      bill={{ id: b.id, name: b.name, code: b.code, amount: (b.amount_due / 100).toFixed(2), due_date: b.due_date ?? "" }}
+      bill={{ id: b.id, name: b.name, code: b.code, amount: (b.amount_due / 100).toFixed(2), due_date: b.due_date ?? "", icon: b.icon }}
     />,
   );
 });
@@ -237,6 +253,7 @@ app.get("/setup", async (c) => {
   return c.html(
     <SetupPage
       tokenSet={!!c.env.UP_TOKEN}
+      viewerSet={!!c.env.VIEWER_PASSWORD}
       tokenError={tokenError}
       accounts={accounts}
       accountId={accountId}
