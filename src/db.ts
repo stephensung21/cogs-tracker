@@ -66,6 +66,7 @@ export interface BillWithTotals extends Bill {
   paid_at: string | null;
   payments: number;
   payers: string | null; // comma-separated names of people who paid in
+  has_receipt: number; // 1 = a payment screenshot is attached
 }
 
 const BILL_TOTALS_SQL = `
@@ -75,7 +76,8 @@ const BILL_TOTALS_SQL = `
     MAX(CASE WHEN a.kind = 'out' THEN a.created_at END)                AS paid_at,
     COUNT(CASE WHEN a.kind = 'in' THEN 1 END)                          AS payments,
     GROUP_CONCAT(DISTINCT CASE WHEN a.kind = 'in'
-      THEN REPLACE(COALESCE(a.payer, t.description), ',', ' ') END)    AS payers
+      THEN REPLACE(COALESCE(a.payer, t.description), ',', ' ') END)    AS payers,
+    EXISTS (SELECT 1 FROM receipts r WHERE r.bill_id = b.id)           AS has_receipt
   FROM bills b
   LEFT JOIN allocations a ON a.bill_id = b.id
   LEFT JOIN transactions t ON t.id = a.txn_id
@@ -193,8 +195,34 @@ export async function deleteBill(db: D1Database, id: number): Promise<void> {
     db.prepare("DELETE FROM allocations WHERE bill_id = ?").bind(id),
     // Payments with nothing left allocated go back to automatic matching.
     db.prepare("UPDATE transactions SET manual = 0 WHERE manual = 1 AND id NOT IN (SELECT txn_id FROM allocations WHERE txn_id IS NOT NULL)"),
+    db.prepare("DELETE FROM receipts WHERE bill_id = ?").bind(id),
     db.prepare("DELETE FROM bills WHERE id = ?").bind(id),
   ]);
+}
+
+// ---------- payment screenshots ----------
+
+export async function saveReceipt(db: D1Database, billId: number, mime: string, bytes: ArrayBuffer): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO receipts (bill_id, mime, data, size) VALUES (?, ?, ?, ?)
+       ON CONFLICT(bill_id) DO UPDATE SET mime = excluded.mime, data = excluded.data, size = excluded.size,
+         created_at = datetime('now')`,
+    )
+    .bind(billId, mime, bytes, bytes.byteLength)
+    .run();
+}
+
+export async function getReceipt(db: D1Database, billId: number): Promise<{ mime: string; data: Uint8Array } | null> {
+  const r = await db.prepare("SELECT mime, data FROM receipts WHERE bill_id = ?").bind(billId)
+    .first<{ mime: string; data: ArrayBuffer | number[] }>();
+  if (!r) return null;
+  // D1 hands BLOBs back as an array of byte values.
+  return { mime: r.mime, data: r.data instanceof ArrayBuffer ? new Uint8Array(r.data) : Uint8Array.from(r.data) };
+}
+
+export async function deleteReceipt(db: D1Database, billId: number): Promise<void> {
+  await db.prepare("DELETE FROM receipts WHERE bill_id = ?").bind(billId).run();
 }
 
 // ---------- recurring bills ----------

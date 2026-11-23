@@ -8,10 +8,12 @@ import {
   createBill,
   deleteBill,
   deleteManualEntry,
+  deleteReceipt,
   deleteSetting,
   deleteTransactionsNotIn,
   dismissShortfall,
   getBill,
+  getReceipt,
   getTransaction,
   kindForAmount,
   listAllBillsBrief,
@@ -22,6 +24,7 @@ import {
   listTransactions,
   rematchUnassigned,
   rollOver,
+  saveReceipt,
   resetToAutomatic,
   setAllocations,
   setBillArchived,
@@ -33,6 +36,7 @@ import {
 } from "./db";
 import { billStatus, normalizeCode, parseDollars, parseSplits } from "./matching";
 import { isFrequency, sydneyDate } from "./periods";
+import { checkReceipt } from "./receipts";
 import { handleUpWebhook, syncRecent, upClient } from "./sync";
 import type { UpAccount, UpWebhook } from "./up";
 import {
@@ -93,6 +97,8 @@ for (const path of ["/sync", "/bills/new", "/bills/:id/edit", "/bills/:id/archiv
 }
 app.post("/bills", requireAdmin);
 app.post("/bills/:id", requireAdmin);
+app.post("/bills/:id/receipt", requireAdmin);
+app.post("/bills/:id/receipt/delete", requireAdmin);
 
 const flash = (c: { req: { query: (k: string) => string | undefined } }) => c.req.query("msg") ?? null;
 const withMsg = (path: string, msg: string) =>
@@ -188,9 +194,13 @@ app.post("/bills", async (c) => {
   );
 });
 
-app.get("/bills/archived", async (c) =>
-  c.html(<ArchivedPage role={c.get("role")} bills={await listBills(c.env.DB, true)} />),
-);
+app.get("/bills/archived", async (c) => {
+  // Newest first: the most recent periods are the ones people look for.
+  const bills = (await listBills(c.env.DB, true)).sort((a, b) =>
+    (b.due_date ?? b.created_at).localeCompare(a.due_date ?? a.created_at),
+  );
+  return c.html(<ArchivedPage role={c.get("role")} bills={bills} />);
+});
 
 app.get("/bills/:id", async (c) => {
   const id = Number(c.req.param("id"));
@@ -264,8 +274,45 @@ app.post("/bills/:id/paid", async (c) => {
   if (paid && form.checked !== "1") {
     return c.redirect(withMsg(`/bills/${id}`, "Tick “Receipt has been checked and paid” first."));
   }
+  const file = uploadedFile(form.receipt);
+  if (paid && file) {
+    const err = checkReceipt(file.type, file.size);
+    if (err) return c.redirect(withMsg(`/bills/${id}`, err));
+    await saveReceipt(c.env.DB, id, file.type, await file.arrayBuffer());
+  }
   await setMarkedPaid(c.env.DB, id, paid);
   return c.redirect(withMsg(`/bills/${id}`, paid ? "Marked as paid. Receipt checked." : "No longer marked as paid."));
+});
+
+/** A file from a multipart form, or null when the field was left empty. */
+function uploadedFile(v: unknown): File | null {
+  return v instanceof File && v.size > 0 ? v : null;
+}
+
+app.post("/bills/:id/receipt", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!(await getBill(c.env.DB, id))) return c.notFound();
+  const file = uploadedFile((await c.req.parseBody()).receipt);
+  if (!file) return c.redirect(withMsg(`/bills/${id}`, "Pick a screenshot first."));
+  const err = checkReceipt(file.type, file.size);
+  if (err) return c.redirect(withMsg(`/bills/${id}`, err));
+  await saveReceipt(c.env.DB, id, file.type, await file.arrayBuffer());
+  return c.redirect(withMsg(`/bills/${id}`, "Screenshot saved."));
+});
+
+app.post("/bills/:id/receipt/delete", async (c) => {
+  const id = Number(c.req.param("id"));
+  await deleteReceipt(c.env.DB, id);
+  return c.redirect(withMsg(`/bills/${id}`, "Screenshot removed."));
+});
+
+/** Payment screenshot: any logged-in user (admin or viewer) can see it. */
+app.get("/bills/:id/receipt", async (c) => {
+  const r = await getReceipt(c.env.DB, Number(c.req.param("id")));
+  if (!r) return c.notFound();
+  return new Response(r.data, {
+    headers: { "Content-Type": r.mime, "Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff" },
+  });
 });
 
 app.post("/bills/:id/entries", async (c) => {

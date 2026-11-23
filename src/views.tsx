@@ -158,6 +158,12 @@ ${["sun", "sky", "peach", "aqua", "rose", "lilac", "mint", "stone"]
 .badge{font-size:12px;font-weight:800;padding:4px 10px;border-radius:99px;background:var(--track);color:var(--muted);white-space:nowrap;position:relative}
 .badge.funded{background:var(--blue-soft);color:var(--blue)}
 .badge.paid{background:var(--ok-soft);color:var(--ok)}
+.file-btn{cursor:pointer;margin:0}
+.receipt-thumb{display:inline-flex;flex-direction:column;gap:6px;margin:10px 4px 0;text-decoration:none;color:var(--muted);font-size:13px;font-weight:600}
+.receipt-thumb img{width:120px;height:120px;object-fit:cover;object-position:top;border-radius:14px;border:1px solid var(--line);box-shadow:var(--shadow);background:var(--card)}
+.receipt-thumb span,.receipt-link{display:inline-flex;align-items:center;gap:6px}
+.receipt-link{margin:8px 6px 0;font-size:14px;font-weight:650;color:var(--accent);text-decoration:none}
+.receipt-link:hover{text-decoration:underline}
 .mark-paid{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:space-between}
 .mark-paid .check{display:inline-flex;align-items:center;gap:9px;margin:0;font-weight:650}
 .mark-paid .check input{width:20px;height:20px;margin:0;accent-color:var(--ok)}
@@ -293,10 +299,27 @@ var r=document.documentElement,t=r.getAttribute('data-theme')==='dark'?'light':'
 try{localStorage.setItem('theme',t)}catch(e){}
 var m=document.querySelector('meta[name=theme-color]');if(m)m.setAttribute('content',t==='dark'?'#16130F':'#FBF7F0');});`;
 
+/**
+ * Shrinks a picked screenshot in the browser before upload: max 1200px wide / 3000px tall, WebP (JPEG where the browser can't
+ * make WebP, e.g. Safari), quality 0.8, or 0.6 if still over 900 KB. A 1-3 MB phone screenshot ends up around 80-150 KB.
+ */
+const SHRINK_JS = `document.addEventListener('change',async function(e){var inp=e.target;if(!inp.matches||!inp.matches('input[data-shrink]'))return;
+var f=inp.files&&inp.files[0];if(!f||!f.type.startsWith('image/'))return;
+var lbl=inp.closest('form').querySelector('[data-file-label]');if(lbl)lbl.textContent='Shrinking…';
+try{var bmp=await createImageBitmap(f);var s=Math.min(1,1200/bmp.width,3000/bmp.height);var c=document.createElement('canvas');
+c.width=Math.round(bmp.width*s);c.height=Math.round(bmp.height*s);c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
+var enc=function(t,q){return new Promise(function(r){c.toBlob(r,t,q)})};var b=await enc('image/webp',0.8);
+var t=b&&b.type==='image/webp'?'image/webp':'image/jpeg';if(t!=='image/webp')b=await enc(t,0.8);
+if(b&&b.size>900000)b=await enc(t,0.6);
+if(b&&b.size<f.size){var dt=new DataTransfer();dt.items.add(new File([b],'screenshot.'+(b.type==='image/webp'?'webp':'jpg'),{type:b.type}));inp.files=dt.files;}
+}catch(err){}
+var g=inp.files[0];if(lbl)lbl.textContent='Screenshot added ('+Math.max(1,Math.round(g.size/1024))+' KB)';
+if(inp.hasAttribute('data-autosubmit'))inp.form.submit();});`;
+
 const COPY_JS = `document.addEventListener('click',e=>{const b=e.target.closest('[data-copy]');if(!b)return;e.preventDefault();
 navigator.clipboard&&navigator.clipboard.writeText(b.dataset.copy).then(()=>{const t=b.querySelector('.copy-label');if(t){const o=t.textContent;t.textContent='Copied!';setTimeout(()=>t.textContent=o,1200)}})});`;
 
-type Nav = "home" | "txns" | "setup";
+type Nav = "home" | "past" | "txns" | "setup";
 
 export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Child; flash?: string | null }> = (p) => {
   const admin = p.role === "admin";
@@ -319,20 +342,19 @@ export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Chil
         <style>{raw(CSS)}</style>
         <script>{raw(THEME_HEAD_JS)}</script>
       </head>
-      <body class={admin ? "has-tabbar" : ""}>
+      <body class={p.role ? "has-tabbar" : ""}>
         {p.role && (
           <header class="top">
             <div class="top-in">
               <a class="home" href="/" style="text-decoration:none" aria-label="Home">
                 <Logo size={32} />
               </a>
-              {admin && (
-                <nav>
-                  <a href="/" class={p.nav === "home" ? "on" : ""}>Bills</a>
-                  <a href="/transactions" class={p.nav === "txns" ? "on" : ""}>Payments</a>
-                  <a href="/setup" class={p.nav === "setup" ? "on" : ""}>Setup</a>
-                </nav>
-              )}
+              <nav>
+                <a href="/" class={p.nav === "home" ? "on" : ""}>Bills</a>
+                <a href="/bills/archived" class={p.nav === "past" ? "on" : ""}>Past bills</a>
+                {admin && <a href="/transactions" class={p.nav === "txns" ? "on" : ""}>Payments</a>}
+                {admin && <a href="/setup" class={p.nav === "setup" ? "on" : ""}>Setup</a>}
+              </nav>
               <div class="right">
                 {!admin && (
                   <span class="chip"><UiIcon name="eye" size={14} /> View only</span>
@@ -352,14 +374,16 @@ export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Chil
           {p.flash && <div class="flash">{p.flash}</div>}
           {p.children}
         </main>
-        {admin && (
+        {p.role && (
           <nav class="tabbar" aria-label="Main">
             <a href="/" class={p.nav === "home" ? "on" : ""}><UiIcon name="bills" size={22} />Bills</a>
-            <a href="/transactions" class={p.nav === "txns" ? "on" : ""}><UiIcon name="swap" size={22} />Payments</a>
-            <a href="/setup" class={p.nav === "setup" ? "on" : ""}><UiIcon name="gear" size={22} />Setup</a>
+            <a href="/bills/archived" class={p.nav === "past" ? "on" : ""}><UiIcon name="clock" size={22} />Past</a>
+            {admin && <a href="/transactions" class={p.nav === "txns" ? "on" : ""}><UiIcon name="swap" size={22} />Payments</a>}
+            {admin && <a href="/setup" class={p.nav === "setup" ? "on" : ""}><UiIcon name="gear" size={22} />Setup</a>}
           </nav>
         )}
         <script>{raw(COPY_JS)}</script>
+        <script>{raw(SHRINK_JS)}</script>
         <script>{raw(THEME_TOGGLE_JS)}</script>
       </body>
     </html>
@@ -586,13 +610,24 @@ export const Dashboard: FC<{
 };
 
 export const ArchivedPage: FC<{ role: Role; bills: BillWithTotals[] }> = ({ role, bills }) => (
-  <Layout title="Past bills" role={role} nav="home">
-    <a class="btn" href="/" style="margin-bottom:14px"><UiIcon name="back" size={16} />Bills</a>
-    <h1 style="margin-bottom:16px">Past bills</h1>
+  <Layout title="Past bills" role={role} nav="past">
+    <h1 style="margin-bottom:6px">Past bills</h1>
+    <p class="muted" style="margin:0 0 16px">Finished and archived bills, newest first.</p>
     {bills.length === 0 ? (
       <div class="card empty"><EmptyBills /><div>Nothing archived yet.</div></div>
     ) : (
-      <div class="stack stagger">{bills.map((b) => <BillCard b={b} />)}</div>
+      <div class="stack stagger">
+        {bills.map((b) => (
+          <div class="past-item">
+            <BillCard b={b} />
+            {b.has_receipt === 1 && (
+              <a class="receipt-link" href={`/bills/${b.id}/receipt`} target="_blank" rel="noopener">
+                <UiIcon name="image" size={16} />View payment screenshot
+              </a>
+            )}
+          </div>
+        ))}
+      </div>
     )}
   </Layout>
 );
@@ -700,7 +735,30 @@ export const BillDetail: FC<{ role: Role; b: BillWithTotals; entries: BillEntry[
       <BillCard b={b} link={false} />
       {b.marked_paid_at ? (
         <p class="hint" style="margin:8px 4px 0;color:var(--ok);font-weight:700">✓ Receipt checked and paid · {fmtDate(b.marked_paid_at)}</p>
-      ) : b.paid_out > 0 && b.paid_at ? (
+      ) : null}
+      {b.has_receipt === 1 && (
+        <a class="receipt-thumb" href={`/bills/${b.id}/receipt`} target="_blank" rel="noopener" title="Open payment screenshot">
+          <img src={`/bills/${b.id}/receipt`} alt="Payment screenshot" loading="lazy" />
+          <span><UiIcon name="image" size={15} />Payment screenshot</span>
+        </a>
+      )}
+      {admin && b.marked_paid_at && (
+        <div class="row" style="margin-top:8px">
+          <form class="inline receipt-up" method="post" action={`/bills/${b.id}/receipt`} enctype="multipart/form-data">
+            <label class="btn file-btn">
+              <UiIcon name="image" size={16} />{b.has_receipt === 1 ? "Replace screenshot" : "Add payment screenshot"}
+              <input type="file" name="receipt" accept="image/*" data-shrink data-autosubmit hidden />
+            </label>
+          </form>
+          {b.has_receipt === 1 && (
+            <form class="inline" method="post" action={`/bills/${b.id}/receipt/delete`}
+              onsubmit="return confirm('Remove the payment screenshot?')">
+              <button type="submit" class="danger">Remove screenshot</button>
+            </form>
+          )}
+        </div>
+      )}
+      {b.marked_paid_at ? null : b.paid_out > 0 && b.paid_at ? (
         <p class="hint" style="margin:8px 4px 0">
           {formatCents(b.paid_out)} taken out on {fmtDate(b.paid_at)}. Waiting for cogs to check the receipt.
         </p>
@@ -735,13 +793,19 @@ export const BillDetail: FC<{ role: Role; b: BillWithTotals; entries: BillEntry[
       </div>
 
       {admin && !b.marked_paid_at && (
-        <form class="card mark-paid" method="post" action={`/bills/${b.id}/paid`} style="margin-top:14px">
+        <form class="card mark-paid" method="post" action={`/bills/${b.id}/paid`} enctype="multipart/form-data" style="margin-top:14px">
           <input type="hidden" name="paid" value="1" />
           <label class="check">
             <input type="checkbox" name="checked" value="1" required />
             Receipt has been checked and paid
           </label>
-          <button class="primary" type="submit">Mark as paid</button>
+          <div class="row">
+            <label class="btn file-btn">
+              <UiIcon name="image" size={16} /><span data-file-label>Add screenshot (optional)</span>
+              <input type="file" name="receipt" accept="image/*" data-shrink hidden />
+            </label>
+            <button class="primary" type="submit">Mark as paid</button>
+          </div>
         </form>
       )}
       {admin && (

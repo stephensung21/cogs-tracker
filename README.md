@@ -34,6 +34,11 @@ Cogs can correct anything the automatic matching gets wrong:
 - **Mark as paid** after ticking "Receipt has been checked and paid" (also works when paid from another account), and undo it.
 - **Ignore** a payment, or **Reset to automatic** to throw away manual changes and match by reference again.
 
+**Payment screenshots:** when marking a bill paid (or any time after), cogs can attach a screenshot of the
+payment. The browser shrinks it first (max 1200px wide, WebP or JPEG, usually 80-150 KB) and it's stored in the
+D1 database (`receipts` table), so there's nothing extra to set up. Both logins can view it from the bill page or
+the **Past bills** tab. The server only accepts images up to 1 MB.
+
 Anything set by hand shows a **MANUAL** tag (the roommate can see it) and is never changed by syncs or webhooks.
 Under the hood each bill's total comes from the `allocations` table: one row per "this much of this payment
 counts towards this bill", with manual entries being allocations that have no bank transaction.
@@ -141,5 +146,6 @@ src/db.ts       D1 queries
 src/views.tsx   HTML pages and styles (server-rendered, no frontend framework)
 src/art.tsx     logo, bill icons, illustrations, avatars (inline SVG)
 src/auth.ts     admin / viewer password login with a signed cookie
+src/receipts.ts payment screenshot checks (type, size)
 migrations/     database schema
 ```
