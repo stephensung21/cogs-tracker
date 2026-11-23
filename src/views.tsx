@@ -239,6 +239,14 @@ code{font-size:12.5px;background:var(--track);padding:1px 6px;border-radius:6px;
 .note{font-style:italic}
 .mini{font-size:12.5px;color:var(--muted)}
 .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.tag-est{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:1px 7px;border-radius:99px;background:var(--warn-soft);color:var(--warn)}
+.tag-repeat{font-size:11px;font-weight:700;padding:1px 7px;border-radius:99px;background:var(--blue-soft);color:var(--blue)}
+.short-banner{display:flex;gap:14px;align-items:flex-start;border:2px solid var(--danger);border-radius:20px;padding:16px 18px;margin-bottom:16px;background:var(--card, transparent)}
+.short-banner .big{font-size:44px;line-height:1}
+.short-banner h2{margin:0 0 6px;color:var(--danger);font-size:20px}
+.short-banner .rows{display:flex;flex-direction:column;gap:6px}
+.short-banner .r{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.short-banner .r a{color:inherit;font-weight:700}
 .chips:empty{display:none}
 .chip-s{font-size:12.5px;font-weight:700;padding:3px 10px;border-radius:99px;background:var(--accent-soft);color:var(--accent)}
 .chip-s.out{background:var(--ok-soft);color:var(--ok)}
@@ -373,6 +381,8 @@ export const BillCard: FC<{ b: BillWithTotals; link?: boolean }> = ({ b, link = 
           <div class="bill-name">{b.name}</div>
           <div class="bill-sub">
             <span class="code">{b.code}</span>
+            {isFrequency(b.frequency) && <span class="tag-repeat">Repeats {FREQUENCY_LABELS[b.frequency].toLowerCase()}</span>}
+            {!link && b.period_start && b.due_date && <span>{fmtRange(b.period_start, b.due_date)}</span>}
             {s === "paid" && (b.paid_at || b.marked_paid_at) ? <span>Paid {fmtDate((b.paid_at || b.marked_paid_at)!)}</span> : b.due_date ? <span>Due {fmtDate(b.due_date)}</span> : null}
           </div>
         </div>
@@ -383,10 +393,12 @@ export const BillCard: FC<{ b: BillWithTotals; link?: boolean }> = ({ b, link = 
       </div>
       <div class="bill-foot">
         <span class="amount tnum">
-          <strong>{formatCents(b.collected)}</strong> of {formatCents(b.amount_due)}
+          <strong>{formatCents(b.collected)}</strong> of {estimate(b) ? "~" : ""}{formatCents(b.amount_due)}
+          {estimate(b) && <> <span class="tag-est">estimate</span></>}
         </span>
         <span class="right-meta">
           {s === "open" && <span class="tnum">{formatCents(b.amount_due - b.collected)} to go</span>}
+          {b.collected > b.amount_due && <span class="tnum">{formatCents(b.collected - b.amount_due)} extra</span>}
           {payers.length > 0 && (
             <span class="avatars">{payers.slice(0, 4).map((n) => <Avatar name={n} />)}</span>
           )}
@@ -400,6 +412,32 @@ export const BillCard: FC<{ b: BillWithTotals; link?: boolean }> = ({ b, link = 
     <div class="card bill">{inner}</div>
   );
 };
+
+const ShortBanner: FC<{ bills: BillWithTotals[]; admin: boolean }> = ({ bills, admin }) => (
+  <div class="short-banner" role="alert">
+    <span class="big" aria-hidden="true">⚠️</span>
+    <div style="flex:1">
+      <h2>Not fully paid</h2>
+      <div class="rows">
+        {bills.map((b) => (
+          <div class="r">
+            <a href={`/bills/${b.id}`}>
+              {b.name} ({b.period_start ? fmtRange(b.period_start, b.due_date!) : `due ${fmtDate(b.due_date!)}`})
+            </a>
+            <span class="tnum">
+              {formatCents(b.collected)} of {formatCents(b.amount_due)} · <strong>{formatCents(b.amount_due - b.collected)} short</strong>
+            </span>
+            {admin && (
+              <form class="inline" method="post" action={`/bills/${b.id}/dismiss-shortfall`}>
+                <button type="submit">Dismiss</button>
+              </form>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  </div>
+);
 
 const Hero: FC<{ bills: BillWithTotals[] }> = ({ bills }) => {
   const unpaid = bills.filter((b) => billStatus(b.collected, b.amount_due, b.paid_out, b.marked_paid_at) !== "paid");
@@ -438,10 +476,12 @@ export const Dashboard: FC<{
   accountName: string | null;
   lastSync: string | null;
   flash?: string | null;
+  short: BillWithTotals[];
 }> = (p) => {
   const admin = p.role === "admin";
   return (
     <Layout title="Bills" role={p.role} nav="home" flash={p.flash}>
+      {p.short.length > 0 && <ShortBanner bills={p.short} admin={admin} />}
       {admin && !p.accountName && (
         <div class="notice">No Up account connected yet. <a href="/setup">Head to Setup</a>.</div>
       )}
@@ -1014,6 +1054,15 @@ export const SetupPage: FC<{
     </div>
   </Layout>
 );
+
+/** Shown as "~$180 estimate" until the admin sets this period's real amount. */
+function estimate(b: Bill): boolean {
+  return b.approximate === 1 && b.amount_confirmed !== 1;
+}
+
+function fmtRange(start: string, end: string): string {
+  return `${fmtDate(start)} – ${fmtDate(end)}`;
+}
 
 function fmtDate(s: string): string {
   const d = new Date(s.length === 10 ? s + "T00:00:00" : s);

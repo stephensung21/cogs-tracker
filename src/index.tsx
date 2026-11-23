@@ -18,6 +18,7 @@ import {
   listBillEntries,
   getSetting,
   listBills,
+  listShortPeriods,
   listTransactions,
   rematchUnassigned,
   rollOver,
@@ -98,14 +99,17 @@ const withMsg = (path: string, msg: string) =>
   `${path}${path.includes("?") ? "&" : "?"}msg=${encodeURIComponent(msg)}`;
 
 app.get("/", async (c) => {
-  const [bills, unmatched, accountName, lastSync] = await Promise.all([
+  const today = sydneyDate(new Date());
+  await rollOver(c.env.DB, today);
+  const [bills, unmatched, accountName, lastSync, short] = await Promise.all([
     listBills(c.env.DB),
     countUnmatched(c.env.DB),
     getSetting(c.env.DB, "account_name"),
     getSetting(c.env.DB, "last_sync"),
+    listShortPeriods(c.env.DB, today),
   ]);
   return c.html(
-    <Dashboard role={c.get("role")} bills={bills} unmatched={unmatched} accountName={accountName} lastSync={lastSync} flash={flash(c)} />,
+    <Dashboard role={c.get("role")} bills={bills} unmatched={unmatched} accountName={accountName} lastSync={lastSync} short={short} flash={flash(c)} />,
   );
 });
 
