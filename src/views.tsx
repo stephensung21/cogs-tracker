@@ -492,7 +492,8 @@ const Hero: FC<{ bills: BillWithTotals[] }> = ({ bills }) => {
         </div>
         <div class="muted">
           {due === 0
-            ? bills.length ? "Everything's paid. Legends." : "Add a bill to get started."
+            ? used > 0 ? "Money's been taken out. Waiting for receipt checks."
+              : bills.length ? "Everything's paid. Legends." : "Add a bill to get started."
             : collected >= due ? "Fully stocked, time to pay up!" : `${formatCents(due - collected)} still to come in`}
         </div>
         <div class="hero-stats">
@@ -510,6 +511,7 @@ export const Dashboard: FC<{
   role: Role;
   bills: BillWithTotals[];
   unmatched: number;
+  waiting: BillWithTotals[]; // Used bills (current and past) whose receipt hasn't been checked
   accountName: string | null;
   lastSync: string | null;
   flash?: string | null;
@@ -521,6 +523,17 @@ export const Dashboard: FC<{
       {p.short.length > 0 && <ShortBanner bills={p.short} admin={admin} />}
       {admin && !p.accountName && (
         <div class="notice">No Up account connected yet. <a href="/setup">Head to Setup</a>.</div>
+      )}
+      {admin && p.waiting.length > 0 && (
+        <div class="notice">
+          {p.waiting.length} bill{p.waiting.length === 1 ? "" : "s"} waiting for you to check the receipt:{" "}
+          {p.waiting.map((b, i) => (
+            <>
+              {i > 0 && ", "}
+              <a href={`/bills/${b.id}`}>{b.name}{b.period_start && b.due_date ? ` (${fmtRange(b.period_start, b.due_date)})` : ""}</a>
+            </>
+          ))}
+        </div>
       )}
       {admin && p.unmatched > 0 && (
         <div class="notice">
@@ -946,7 +959,7 @@ export const TransactionEdit: FC<{ t: TxnWithAllocations; bills: Bill[]; error?:
       <form class="card" method="post" action={`/transactions/${encodeURIComponent(t.id)}/split`}>
         <p class="hint" style="margin-top:0">
           One row = whole payment to one bill (leave the amount blank). Add rows to split it. Anything left over stays
-          in Unmatched. "Bill payment" marks the bill as paid.
+          in Unmatched. "Bill payment" marks the bill as used (paid once the receipt is checked).
         </p>
         <div id="split-rows">
           {rows.map((r) => (

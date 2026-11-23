@@ -31,7 +31,7 @@ import {
   updateBill,
   type Env,
 } from "./db";
-import { normalizeCode, parseDollars, parseSplits } from "./matching";
+import { billStatus, normalizeCode, parseDollars, parseSplits } from "./matching";
 import { isFrequency, sydneyDate } from "./periods";
 import { handleUpWebhook, syncRecent, upClient } from "./sync";
 import type { UpAccount, UpWebhook } from "./up";
@@ -101,15 +101,18 @@ const withMsg = (path: string, msg: string) =>
 app.get("/", async (c) => {
   const today = sydneyDate(new Date());
   await rollOver(c.env.DB, today);
-  const [bills, unmatched, accountName, lastSync, short] = await Promise.all([
+  const [bills, unmatched, accountName, lastSync, short, past] = await Promise.all([
     listBills(c.env.DB),
     countUnmatched(c.env.DB),
     getSetting(c.env.DB, "account_name"),
     getSetting(c.env.DB, "last_sync"),
     listShortPeriods(c.env.DB, today),
+    listBills(c.env.DB, true),
   ]);
+  // Bills are often paid after rollover, so past periods can be waiting for a receipt check too.
+  const waiting = [...past, ...bills].filter((b) => billStatus(b.collected, b.amount_due, b.paid_out, b.marked_paid_at) === "used");
   return c.html(
-    <Dashboard role={c.get("role")} bills={bills} unmatched={unmatched} accountName={accountName} lastSync={lastSync} short={short} flash={flash(c)} />,
+    <Dashboard role={c.get("role")} bills={bills} unmatched={unmatched} waiting={waiting} accountName={accountName} lastSync={lastSync} short={short} flash={flash(c)} />,
   );
 });
 
