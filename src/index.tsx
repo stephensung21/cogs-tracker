@@ -150,7 +150,9 @@ async function validateBill(env: Env, f: BillInput, exceptId?: number) {
   if (frequency && !due_date) return { error: "A repeating bill needs a due date." };
   const usual_amount = f.usual_amount.trim() ? parseDollars(f.usual_amount) : amount_due;
   if (usual_amount === null) return { error: "Usual amount should look like 120 or 120.50." };
-  if (await codeInUse(env.DB, code, exceptId))
+  // Codes only need to be unique among active bills, so past periods of a repeating bill can still be edited.
+  const editingArchived = exceptId !== undefined && (await getBill(env.DB, exceptId))?.archived === 1;
+  if (!editingArchived && (await codeInUse(env.DB, code, exceptId)))
     return { error: `Another active bill already uses ${code}. Archive it first or pick a different code.` };
   const icon = isBillIcon(f.icon) ? f.icon : null;
   return { value: { name, code, amount_due, due_date, icon, frequency, approximate: f.approximate, usual_amount } };

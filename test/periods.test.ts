@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isShort, missedPeriods, nextDue, periodStartFor, pickPeriod, sydneyDate } from "../src/periods";
+import { anchorAfterEdit, isShort, missedPeriods, nextDue, periodStartFor, pickPeriod, sydneyDate } from "../src/periods";
 
 describe("sydneyDate", () => {
   it("uses Sydney, not UTC", () => {
@@ -85,5 +85,18 @@ describe("isShort", () => {
     expect(isShort({ ...b, collected: 18000 }, "2026-12-01")).toBe(false);
     expect(isShort({ ...b, shortfall_dismissed_at: "2026-11-20" }, "2026-12-01")).toBe(false);
     expect(isShort({ ...b, due_date: null }, "2026-12-01")).toBe(false);
+  });
+});
+
+describe("anchorAfterEdit", () => {
+  it("keeps the anchor when the due date didn't change", () => {
+    expect(anchorAfterEdit(31, "2027-02-28", "2027-02-28")).toBe(31);
+  });
+  it("moves the anchor to the new due day when the admin changes the due date", () => {
+    expect(anchorAfterEdit(31, "2027-01-31", "2027-01-15")).toBe(15);
+  });
+  it("starts from the due day when there is no anchor yet", () => {
+    expect(anchorAfterEdit(null, null, "2027-01-31")).toBe(31);
+    expect(anchorAfterEdit(null, "2027-02-28", "2027-02-28")).toBe(28);
   });
 });

@@ -128,3 +128,13 @@ export function isShort(
 ): boolean {
   return b.due_date !== null && b.due_date < today && b.collected < b.amount_due && !b.shortfall_dismissed_at;
 }
+
+/**
+ * The day of month a repeating bill falls on, after an edit. Changing the due date moves it to the new
+ * day; otherwise it stays (so a bill on the 31st that's currently on 28 Feb goes back to the 31st).
+ */
+export function anchorAfterEdit(prevAnchor: number | null, oldDue: string | null, newDue: string): number {
+  const day = Number(newDue.slice(8, 10));
+  if (prevAnchor === null || oldDue !== newDue) return day;
+  return prevAnchor;
+}

@@ -1,5 +1,5 @@
 import { matchBill, type BillCode } from "./matching";
-import { isShort, missedPeriods, periodStartFor, pickPeriod, sydneyDate, type Frequency, type SeriesPeriod } from "./periods";
+import { anchorAfterEdit, isShort, missedPeriods, periodStartFor, pickPeriod, sydneyDate, type Frequency, type SeriesPeriod } from "./periods";
 import type { UpTransaction } from "./up";
 
 export interface Env {
@@ -56,6 +56,7 @@ export interface Bill {
   period_start: string | null;
   usual_amount: number | null;
   shortfall_dismissed_at: string | null;
+  anchor_day: number | null;
 }
 
 export interface BillWithTotals extends Bill {
@@ -133,10 +134,9 @@ export interface BillFields {
 }
 
 /** series_id / period_start for a bill that repeats, or nulls for a one-off. */
-function seriesFields(b: BillFields, id: number, existingSeries: number | null) {
-  if (!b.frequency || !b.due_date) return { series_id: null, period_start: null };
-  const anchor = Number(b.due_date.slice(8, 10));
-  return { series_id: existingSeries ?? id, period_start: periodStartFor(b.due_date, b.frequency, anchor) };
+function seriesFields(b: BillFields, id: number, existingSeries: number | null, anchor: number) {
+  if (!b.frequency || !b.due_date) return { series_id: null, period_start: null, anchor_day: null };
+  return { series_id: existingSeries ?? id, period_start: periodStartFor(b.due_date, b.frequency, anchor), anchor_day: anchor };
 }
 
 export async function createBill(db: D1Database, b: BillFields): Promise<number> {
@@ -148,9 +148,12 @@ export async function createBill(db: D1Database, b: BillFields): Promise<number>
     .bind(b.name, b.code, b.amount_due, b.due_date, b.icon, b.frequency, b.approximate ? 1 : 0, b.usual_amount)
     .first<{ id: number }>();
   const id = r!.id;
-  const sf = seriesFields(b, id, null);
+  const sf = seriesFields(b, id, null, b.due_date ? anchorAfterEdit(null, null, b.due_date) : 0);
   if (sf.series_id !== null) {
-    await db.prepare("UPDATE bills SET series_id = ?, period_start = ? WHERE id = ?").bind(sf.series_id, sf.period_start, id).run();
+    await db
+      .prepare("UPDATE bills SET series_id = ?, period_start = ?, anchor_day = ? WHERE id = ?")
+      .bind(sf.series_id, sf.period_start, sf.anchor_day, id)
+      .run();
   }
   return id;
 }
@@ -160,20 +163,24 @@ export async function createBill(db: D1Database, b: BillFields): Promise<number>
  * Turning a one-off bill into a repeating one starts a series at this bill.
  */
 export async function updateBill(db: D1Database, id: number, b: BillFields): Promise<void> {
-  const cur = await db.prepare("SELECT amount_due, amount_confirmed, series_id, period_start FROM bills WHERE id = ?")
-    .bind(id).first<{ amount_due: number; amount_confirmed: number; series_id: number | null; period_start: string | null }>();
+  const cur = await db
+    .prepare("SELECT amount_due, amount_confirmed, series_id, period_start, due_date, anchor_day FROM bills WHERE id = ?")
+    .bind(id)
+    .first<{ amount_due: number; amount_confirmed: number; series_id: number | null; period_start: string | null;
+      due_date: string | null; anchor_day: number | null }>();
   if (!cur) return;
   const confirmed = cur.amount_confirmed === 1 || cur.amount_due !== b.amount_due ? 1 : 0;
+  const anchor = b.due_date ? anchorAfterEdit(cur.anchor_day, cur.due_date, b.due_date) : 0;
   // Keep an existing period's dates unless it has none yet (rolled-over periods already have them).
-  const sf = seriesFields(b, id, cur.series_id);
+  const sf = seriesFields(b, id, cur.series_id, anchor);
   const periodStart = sf.series_id === null ? null : cur.series_id !== null && cur.period_start ? cur.period_start : sf.period_start;
   await db
     .prepare(
       `UPDATE bills SET name = ?, code = ?, amount_due = ?, due_date = ?, icon = ?, frequency = ?, approximate = ?,
-         usual_amount = ?, amount_confirmed = ?, series_id = ?, period_start = ? WHERE id = ?`,
+         usual_amount = ?, amount_confirmed = ?, series_id = ?, period_start = ?, anchor_day = ? WHERE id = ?`,
     )
     .bind(b.name, b.code, b.amount_due, b.due_date, b.icon, b.frequency, b.approximate ? 1 : 0, b.usual_amount,
-      confirmed, sf.series_id, periodStart, id)
+      confirmed, sf.series_id, periodStart, sf.anchor_day, id)
     .run();
 }
 
@@ -207,7 +214,7 @@ export async function rollOver(db: D1Database, today: string): Promise<number> {
     .all<Bill & { first_due: string | null }>();
   let created = 0;
   for (const b of due.results) {
-    const anchor = Number((b.first_due ?? b.due_date!).slice(8, 10));
+    const anchor = b.anchor_day ?? Number((b.first_due ?? b.due_date!).slice(8, 10));
     const periods = missedPeriods(b.due_date!, b.frequency!, anchor, today);
     if (periods.length === 0) continue;
     const series = b.series_id ?? b.id;
@@ -222,12 +229,12 @@ export async function rollOver(db: D1Database, today: string): Promise<number> {
         db
           .prepare(
             `INSERT INTO bills (name, code, amount_due, due_date, icon, archived, frequency, approximate,
-               amount_confirmed, series_id, period_start, usual_amount)
-             SELECT ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?
+               amount_confirmed, series_id, period_start, usual_amount, anchor_day)
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?
              WHERE NOT EXISTS (SELECT 1 FROM bills WHERE series_id = ? AND due_date = ?)`,
           )
           .bind(b.name, b.code, amount, p.due, b.icon, last ? 0 : 1, b.frequency, b.approximate, series,
-            p.start, amount, series, p.due),
+            p.start, amount, anchor, series, p.due),
       );
     });
     await db.batch(stmts);
