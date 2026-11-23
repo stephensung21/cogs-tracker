@@ -1272,7 +1272,9 @@ const LEAFLET_JS_SRI = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=";
 
 /**
  * Map + planes. Starts over the Coral Sea (-16.52, 147.41, zoom 7), loads planes for the visible area
- * from /radar/planes (adsb.lol), refreshes every 60 s while the tab is visible.
+ * from /radar/planes (adsb.lol), refreshes every 15 s while the tab is visible.
+ * Trails: adsb.lol's trace history isn't reachable from a server (bot check), so the browser keeps each
+ * plane's positions as it sees them (last 30 min, in sessionStorage so they survive moving between tabs).
  */
 // Map tiles: OpenStreetMap's standard tiles (no key; light personal use is within their tile policy).
 // Dark mode darkens them with a CSS filter rather than switching tile provider.
@@ -1280,7 +1282,16 @@ const RADAR_JS = `(function(){var el=document.getElementById('radar-map');if(!el
 var map=L.map(el,{zoomControl:true,worldCopyJump:true}).setView([-16.52,147.41],7);
 var attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · planes: <a href="https://adsb.lol">adsb.lol</a> (ODbL)';
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:attr,maxZoom:19}).addTo(map);
-var layer=L.layerGroup().addTo(map),status=document.getElementById('radar-status'),timer=null,seq=0;
+var trailLayer=L.layerGroup().addTo(map),layer=L.layerGroup().addTo(map),status=document.getElementById('radar-status'),timer=null,seq=0,loaded=false;
+var TRAIL_MS=30*60000,TRAIL_MAX=240,KEY='radar-trails',trails={};
+try{trails=JSON.parse(sessionStorage.getItem(KEY)||'{}')||{}}catch(e){trails={}}
+function track(planes,now){var cut=now-TRAIL_MS;
+planes.forEach(function(p){var t=trails[p.id]||(trails[p.id]=[]),la=Math.round(p.lat*1e4)/1e4,lo=Math.round(p.lon*1e4)/1e4,last=t[t.length-1];
+if(!last||last[0]!==la||last[1]!==lo)t.push([la,lo,now]);if(t.length>TRAIL_MAX)t.splice(0,t.length-TRAIL_MAX)});
+Object.keys(trails).forEach(function(id){var t=trails[id].filter(function(x){return x[2]>=cut});if(t.length)trails[id]=t;else delete trails[id]});
+try{sessionStorage.setItem(KEY,JSON.stringify(trails))}catch(e){}}
+function drawTrails(planes){trailLayer.clearLayers();planes.forEach(function(p){var t=trails[p.id];if(!t||t.length<2)return;
+L.polyline(t.map(function(x){return[x[0],x[1]]}),{color:p.onGround?'#8a8f98':'#ff7a45',weight:2.5,opacity:.65,interactive:false}).addTo(trailLayer)})}
 function esc(t){return String(t).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function icon(p){var col=p.onGround?'var(--muted)':'var(--accent)';
 return L.divIcon({className:'plane-icon',iconSize:[26,26],iconAnchor:[13,13],
@@ -1291,16 +1302,17 @@ return '<strong>'+esc(name)+'</strong><br>'+(p.onGround?'On the ground':(p.altFt
 (p.callsign?'<br><a href="https://www.flightradar24.com/'+encodeURIComponent(p.callsign)+'" target="_blank" rel="noopener">Open on Flightradar24</a>':'')}
 async function load(){var b=map.getBounds(),mine=++seq;
 var q='s='+b.getSouth()+'&w='+b.getWest()+'&n='+b.getNorth()+'&e='+b.getEast();
-status.textContent='Loading planes…';
+if(!loaded)status.textContent='Loading planes…';
 try{var r=await fetch('/radar/planes?'+q,{credentials:'same-origin',signal:AbortSignal.timeout?AbortSignal.timeout(15000):undefined});var j=await r.json();if(mine!==seq)return;
-if(!r.ok){layer.clearLayers();status.textContent=j.error||'Radar unavailable.';return}
+if(!r.ok){layer.clearLayers();trailLayer.clearLayers();loaded=false;status.textContent=j.error||'Radar unavailable.';return}
+track(j.planes,Date.now());drawTrails(j.planes);loaded=true;
 layer.clearLayers();j.planes.forEach(function(p){L.marker([p.lat,p.lon],{icon:icon(p),title:p.callsign||p.id}).bindPopup(popup(p)).addTo(layer)});
 var t=new Date(j.time).toLocaleTimeString('en-AU',{hour:'numeric',minute:'2-digit'});
 status.textContent=j.planes.length+' plane'+(j.planes.length===1?'':'s')+' · updated '+t}
-catch(e){if(mine===seq)status.textContent="Couldn't load planes. Retrying in a minute."}}
+catch(e){if(mine===seq)status.textContent="Couldn't load planes. Retrying shortly."}}
 var debounce=null;map.on('moveend',function(){clearTimeout(debounce);debounce=setTimeout(load,400)});
 function tick(){if(document.visibilityState==='visible')load()}
-load();timer=setInterval(tick,60000);document.addEventListener('visibilitychange',tick);})();`;
+load();timer=setInterval(tick,15000);document.addEventListener('visibilitychange',tick);})();`;
 
 export const RadarPage: FC<{ role: Role }> = ({ role }) => (
   <Layout
@@ -1314,7 +1326,7 @@ export const RadarPage: FC<{ role: Role }> = ({ role }) => (
       <span class="muted" id="radar-status">Loading map…</span>
     </div>
     <div id="radar-map" class="radar-map card" />
-    <p class="hint">Live positions from adsb.lol's volunteer receivers, refreshed every minute. Tap a plane for details.</p>
+    <p class="hint">Live positions from adsb.lol's volunteer receivers, refreshed every 15 seconds. Trails build up while the page is open (up to 30 minutes). Tap a plane for details.</p>
     <script src={LEAFLET_JS} integrity={LEAFLET_JS_SRI} crossorigin="" />
     <script>{raw(RADAR_JS)}</script>
   </Layout>

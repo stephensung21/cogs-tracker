@@ -127,8 +127,11 @@ never sent to the browser. Only transactions from the chosen Saver are stored.
 
 The **plane icon** in the header (next to the light/dark toggle) opens a radar of live planes, starting over the
 Coral Sea (-16.52, 147.41), on an OpenStreetMap map. Plane data comes from [adsb.lol](https://adsb.lol)'s free API
-(ODbL licensed, no key) through the Worker (`/radar/planes`, cached 60 s per area). OpenSky was tried first, but
-it refuses connections from Cloudflare Workers.
+(ODbL licensed, no key) through the Worker (`/radar/planes`, cached 10 s per area). The page refreshes every
+15 s. OpenSky was tried first, but it refuses connections from Cloudflare Workers.
+
+Flight path trails are built in the browser from the positions it sees while the page is open (last 30 minutes,
+kept in sessionStorage). adsb.lol's full trace history sits behind a bot check, so the Worker can't fetch it.
 
 ## Local development
 

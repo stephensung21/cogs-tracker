@@ -80,8 +80,8 @@ export interface RadarResult {
   time: number; // adsb.lol's timestamp (ms)
 }
 
-// Per-isolate cache. Cloudflare's Cache API isn't available on workers.dev, and a minute-old radar is fine.
-const CACHE_MS = 60_000;
+// Per-isolate cache. Cloudflare's Cache API isn't available on workers.dev. Short enough for 15 s refreshes.
+const CACHE_MS = 10_000;
 const cache = new Map<string, { at: number; result: RadarResult }>();
 
 export class RadarError extends Error {
