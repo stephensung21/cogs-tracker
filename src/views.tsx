@@ -15,7 +15,7 @@ import {
   type BillIcon,
 } from "./art";
 import type { Role } from "./auth";
-import type { BillWithTotals, TxnWithBill } from "./db";
+import type { Bill, BillEntry, BillWithTotals, TxnWithAllocations } from "./db";
 import { billStatus, formatCents, percent } from "./matching";
 import type { UpAccount, UpWebhook } from "./up";
 
@@ -100,6 +100,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 button.danger{color:var(--danger)}
 button.link{border:none;background:none;padding:0;color:var(--muted);text-decoration:underline;font-weight:500}
 form.inline{display:inline}
+.row>form.inline{display:flex}
 label{display:block;font-weight:700;font-size:13px;margin:16px 0 6px}
 input,select{font:inherit;width:100%;padding:11px 13px;border-radius:14px;border:1.5px solid var(--line);background:var(--bg);color:var(--ink)}
 input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
@@ -231,6 +232,25 @@ code{font-size:12.5px;background:var(--track);padding:1px 6px;border-radius:6px;
 .login .tag{color:var(--muted);margin:6px 0 22px}
 .login form{text-align:left}
 
+
+/* overrides */
+.tag-manual{font-size:11px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:1px 7px;border-radius:99px;background:var(--t-lilac);color:var(--t-lilac-i)}
+.note{font-style:italic}
+.mini{font-size:12.5px;color:var(--muted)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.chips:empty{display:none}
+.chip-s{font-size:12.5px;font-weight:700;padding:3px 10px;border-radius:99px;background:var(--accent-soft);color:var(--accent)}
+.chip-s.out{background:var(--ok-soft);color:var(--ok)}
+.chip-s.warn{background:var(--warn-soft);color:var(--warn)}
+.chip-s.muted-chip{background:var(--track);color:var(--muted)}
+.split-row{display:grid;grid-template-columns:1fr 110px 140px;gap:8px;margin-bottom:8px}
+@media (max-width:520px){.split-row{grid-template-columns:1fr 1fr;padding-bottom:10px;border-bottom:1px dashed var(--line)}.split-row select[name=bill]{grid-column:1/-1}}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+@media (max-width:420px){.grid2{grid-template-columns:1fr}}
+details>summary{cursor:pointer;list-style:none}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:"+";display:inline-grid;place-items:center;width:22px;height:22px;border-radius:7px;background:var(--accent-soft);color:var(--accent);font-weight:800;margin-right:8px}
+details[open]>summary::before{content:"−"}
 @keyframes wiggle{0%,100%{transform:rotate(0)}25%{transform:rotate(-14deg)}60%{transform:rotate(10deg)}}
 @keyframes spin{to{transform:rotate(360deg)}}
 @keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-5px)}}
@@ -335,13 +355,13 @@ function payerNames(b: BillWithTotals): string[] {
 }
 
 const StatusBadge: FC<{ b: BillWithTotals }> = ({ b }) => {
-  const s = billStatus(b.collected, b.amount_due, b.paid_out);
+  const s = billStatus(b.collected, b.amount_due, b.paid_out, b.marked_paid_at);
   const label = s === "paid" ? "Paid" : s === "funded" ? "Ready to pay" : "Collecting";
   return <span class={`badge ${s}`}>{label}</span>;
 };
 
 export const BillCard: FC<{ b: BillWithTotals; link?: boolean }> = ({ b, link = true }) => {
-  const s = billStatus(b.collected, b.amount_due, b.paid_out);
+  const s = billStatus(b.collected, b.amount_due, b.paid_out, b.marked_paid_at);
   const pct = s === "paid" ? 100 : percent(b.collected, b.amount_due);
   const payers = payerNames(b);
   const inner = (
@@ -352,7 +372,7 @@ export const BillCard: FC<{ b: BillWithTotals; link?: boolean }> = ({ b, link = 
           <div class="bill-name">{b.name}</div>
           <div class="bill-sub">
             <span class="code">{b.code}</span>
-            {s === "paid" && b.paid_at ? <span>Paid {fmtDate(b.paid_at)}</span> : b.due_date ? <span>Due {fmtDate(b.due_date)}</span> : null}
+            {s === "paid" && (b.paid_at || b.marked_paid_at) ? <span>Paid {fmtDate((b.paid_at || b.marked_paid_at)!)}</span> : b.due_date ? <span>Due {fmtDate(b.due_date)}</span> : null}
           </div>
         </div>
         <StatusBadge b={b} />
@@ -381,7 +401,7 @@ export const BillCard: FC<{ b: BillWithTotals; link?: boolean }> = ({ b, link = 
 };
 
 const Hero: FC<{ bills: BillWithTotals[] }> = ({ bills }) => {
-  const unpaid = bills.filter((b) => billStatus(b.collected, b.amount_due, b.paid_out) !== "paid");
+  const unpaid = bills.filter((b) => billStatus(b.collected, b.amount_due, b.paid_out, b.marked_paid_at) !== "paid");
   const collected = unpaid.reduce((s, b) => s + Math.min(b.collected, b.amount_due), 0);
   const due = unpaid.reduce((s, b) => s + b.amount_due, 0);
   const ready = unpaid.filter((b) => b.collected >= b.amount_due).length;
@@ -530,66 +550,160 @@ export const BillForm: FC<{
   );
 };
 
-export const BillDetail: FC<{ role: Role; b: BillWithTotals; txns: TxnWithBill[]; flash?: string | null }> = ({
-  role, b, txns, flash,
+const BillOptions: FC<{ bills: Bill[]; selected?: number | null }> = ({ bills, selected }) => {
+  const active = bills.filter((b) => !b.archived);
+  const past = bills.filter((b) => b.archived);
+  const opt = (b: Bill) => <option value={String(b.id)} selected={selected === b.id}>{b.name} ({b.code})</option>;
+  return (
+    <>
+      <option value="">— No bill —</option>
+      {active.length > 0 && <optgroup label="Current bills">{active.map(opt)}</optgroup>}
+      {past.length > 0 && <optgroup label="Past bills">{past.map(opt)}</optgroup>}
+    </>
+  );
+};
+
+const ManualTag: FC = () => <span class="tag-manual" title="Set by the admin">manual</span>;
+
+export const BillDetail: FC<{ role: Role; b: BillWithTotals; entries: BillEntry[]; flash?: string | null }> = ({
+  role, b, entries, flash,
 }) => {
   const admin = role === "admin";
+  const today = new Date().toISOString().slice(0, 10);
   return (
     <Layout title={b.name} role={role} nav="home" flash={flash}>
       <a class="btn" href="/" style="margin-bottom:14px"><UiIcon name="back" size={16} />Bills</a>
       <BillCard b={b} link={false} />
+      {b.marked_paid_at && (
+        <p class="hint" style="margin:8px 4px 0">Marked as paid by hand on {fmtDate(b.marked_paid_at)}.</p>
+      )}
       <div class="row" style="margin-top:12px">
         <button type="button" data-copy={b.code} title="Copy reference code">
           <UiIcon name="copy" size={16} /><span class="copy-label">Copy code {b.code}</span>
         </button>
         {admin && (
           <>
+            <form class="inline" method="post" action={`/bills/${b.id}/paid`}>
+              <input type="hidden" name="paid" value={b.marked_paid_at ? "0" : "1"} />
+              <button type="submit">{b.marked_paid_at ? "Undo mark as paid" : "Mark as paid"}</button>
+            </form>
             <a class="btn" href={`/bills/${b.id}/edit`}>Edit</a>
             <form class="inline" method="post" action={`/bills/${b.id}/archive`}>
               <input type="hidden" name="archived" value={b.archived ? "0" : "1"} />
               <button type="submit">{b.archived ? "Unarchive" : "Archive"}</button>
             </form>
-            <span style="flex:1" />
             <form class="inline" method="post" action={`/bills/${b.id}/delete`}
-              onsubmit="return confirm('Delete this bill? Its payments go back to Unmatched.')">
+              onsubmit="return confirm('Delete this bill? Its payments go back to Unmatched and manual entries are removed.')">
               <button class="danger" type="submit">Delete</button>
             </form>
           </>
         )}
       </div>
+
+      {admin && (
+        <details class="card" style="margin-top:14px">
+          <summary><strong>Add a manual entry</strong> <span class="muted">· cash, another account, a correction</span></summary>
+          <form method="post" action={`/bills/${b.id}/entries`} style="margin-top:4px">
+            <div class="grid2">
+              <div>
+                <label for="me-kind">Type</label>
+                <select id="me-kind" name="kind">
+                  <option value="in">Money towards this bill</option>
+                  <option value="out">Bill payment (paid out)</option>
+                </select>
+              </div>
+              <div>
+                <label for="me-amount">Amount</label>
+                <input id="me-amount" name="amount" required inputmode="decimal" placeholder="$50.00" />
+              </div>
+              <div>
+                <label for="me-payer">Who</label>
+                <input id="me-payer" name="payer" maxlength={60} placeholder="Roommate, cogs, AGL…" />
+              </div>
+              <div>
+                <label for="me-date">Date</label>
+                <input id="me-date" name="date" type="date" value={today} />
+              </div>
+            </div>
+            <label for="me-note">Note <span class="muted" style="font-weight:500">(optional, shown to your roommate)</span></label>
+            <input id="me-note" name="note" maxlength={140} placeholder="Paid in cash at dinner" />
+            <button class="primary" type="submit" style="margin-top:14px">Add entry</button>
+          </form>
+        </details>
+      )}
+
       <div class="section-head"><h2>Payments</h2></div>
-      {txns.length === 0 ? (
+      {entries.length === 0 ? (
         <div class="card empty">
           <EmptyBills />
           <div>Nothing yet. Transfers with <span class="code">{b.code}</span> in the reference land here.</div>
         </div>
       ) : (
         <div class="card" style="padding:4px 18px">
-          {txns.map((t) => (
-            <div class="pay">
-              {t.amount_cents > 0 ? <Avatar name={t.description ?? "?"} /> : <span class="out-dot">✓</span>}
-              <div class="who">
-                <strong>{t.amount_cents > 0 ? t.description : `Paid to ${t.description}`}</strong>
-                <div class="sub">
-                  {fmtDate(t.created_at)}
-                  {t.message ? ` · “${t.message}”` : ""}
-                  {admin && t.manual ? " · assigned by hand" : ""}
+          {entries.map((e) => {
+            const who = e.payer || e.description || (e.txn_id ? "Unknown" : "Manual entry");
+            const split = e.txn_amount !== null && Math.abs(e.txn_amount) !== e.amount_cents;
+            return (
+              <div class="pay">
+                {e.kind === "in" ? <Avatar name={who} /> : <span class="out-dot">✓</span>}
+                <div class="who">
+                  <strong>{e.kind === "in" ? who : `Paid to ${who}`}</strong>
+                  <div class="sub">
+                    {fmtDate(e.created_at)}
+                    {e.message ? ` · “${e.message}”` : ""}
+                    {split ? ` · part of ${formatCents(Math.abs(e.txn_amount!))}` : ""}
+                    {!e.txn_id ? " · not from the bank" : ""}
+                    {e.source === "manual" && <> · <ManualTag /></>}
+                  </div>
+                  {e.note && <div class="sub note">“{e.note}”</div>}
+                </div>
+                <div style="text-align:right">
+                  <span class={`money tnum ${e.kind === "in" ? "in" : "out"}`}>
+                    {e.kind === "in" ? "+" : "−"}{formatCents(e.amount_cents)}
+                  </span>
+                  {admin && (
+                    <div style="margin-top:2px">
+                      {e.txn_id ? (
+                        <a class="mini" href={`/transactions/${encodeURIComponent(e.txn_id)}`}>Edit</a>
+                      ) : (
+                        <form class="inline" method="post" action={`/entries/${e.id}/delete`}
+                          onsubmit="return confirm('Delete this manual entry?')">
+                          <button class="link mini">Delete</button>
+                        </form>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
-              <span class={`money tnum ${t.amount_cents > 0 ? "in" : "out"}`}>
-                {t.amount_cents > 0 ? "+" : ""}{formatCents(t.amount_cents)}
-              </span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </Layout>
   );
 };
 
+const AllocationChips: FC<{ t: TxnWithAllocations }> = ({ t }) => {
+  const total = Math.abs(t.amount_cents);
+  const left = total - t.allocated;
+  return (
+    <div class="chips">
+      {t.ignored ? <span class="chip-s muted-chip">Ignored</span> : null}
+      {t.allocations.map((a) => (
+        <span class={`chip-s ${a.kind}`}>
+          {a.kind === "out" ? "Paid " : "→ "}{a.bill_name}
+          {t.allocations.length > 1 || a.amount_cents !== total ? ` · ${formatCents(a.amount_cents)}` : ""}
+          {a.source === "manual" ? " · manual" : ""}
+        </span>
+      ))}
+      {!t.ignored && left > 0 && t.allocated > 0 && <span class="chip-s warn">{formatCents(left)} not assigned</span>}
+    </div>
+  );
+};
+
 export const TransactionsPage: FC<{
-  txns: TxnWithBill[];
-  bills: BillWithTotals[];
+  txns: TxnWithAllocations[];
+  bills: Bill[];
   view: "unmatched" | "all";
   flash?: string | null;
 }> = ({ txns, bills, view, flash }) => (
@@ -601,11 +715,11 @@ export const TransactionsPage: FC<{
         {view === "unmatched" ? "Show all" : "Unmatched only"}
       </a>
     </div>
-    {view === "unmatched" && (
-      <p class="hint" style="margin:-4px 0 16px">
-        Payments whose reference didn't match a bill code: typos, your own top-ups, that kind of thing. Pick a bill or ignore them.
-      </p>
-    )}
+    <p class="hint" style="margin:-4px 0 16px">
+      {view === "unmatched"
+        ? "Payments that aren't (fully) assigned to a bill: typos, your own top-ups, that kind of thing. Pick a bill, split it, or ignore it."
+        : "Everything on the bills account. Change any payment's bill, split it, or switch it between money-in and bill payment."}
+    </p>
     {txns.length === 0 ? (
       <div class="card empty">
         {view === "unmatched" ? <AllSorted /> : <EmptyBills />}
@@ -614,42 +728,130 @@ export const TransactionsPage: FC<{
       </div>
     ) : (
       <div class="stack stagger">
-        {txns.map((t) => (
-          <div class="card" style="padding:14px 16px">
-            <div class="pay" style="padding:0;border:none">
-              <Avatar name={t.description ?? "?"} />
-              <div class="who">
-                <strong>{t.description}</strong>
-                <div class="sub">
-                  {fmtDateTime(t.created_at)}
-                  {t.message ? <> · ref <span class="code">{t.message}</span></> : " · no reference"}
-                  {t.transfer_account_id ? " · from your own account" : ""}
-                  {t.status === "HELD" ? " · pending" : ""}
+        {txns.map((t) => {
+          const simple = t.allocations.length <= 1 && (t.allocations.length === 0 || t.allocated === Math.abs(t.amount_cents));
+          const editUrl = `/transactions/${encodeURIComponent(t.id)}`;
+          return (
+            <div class="card" style="padding:14px 16px">
+              <div class="pay" style="padding:0;border:none">
+                <Avatar name={t.description ?? "?"} />
+                <div class="who">
+                  <strong>{t.description}</strong>
+                  <div class="sub">
+                    {fmtDateTime(t.created_at)}
+                    {t.message ? <> · ref <span class="code">{t.message}</span></> : " · no reference"}
+                    {t.transfer_account_id ? " · from your own account" : ""}
+                    {t.status === "HELD" ? " · pending" : ""}
+                  </div>
                 </div>
+                <span class={`money tnum ${t.amount_cents > 0 ? "in" : "out"}`}>
+                  {t.amount_cents > 0 ? "+" : ""}{formatCents(t.amount_cents)}
+                </span>
               </div>
-              <span class={`money tnum ${t.amount_cents > 0 ? "in" : "out"}`}>
-                {t.amount_cents > 0 ? "+" : ""}{formatCents(t.amount_cents)}
-              </span>
-            </div>
-            <form class="assign" method="post" action={`/transactions/${encodeURIComponent(t.id)}/assign`}>
-              <input type="hidden" name="back" value={view} />
-              <select name="bill_id" aria-label="Assign to bill">
-                <option value="">— No bill —</option>
-                {bills.map((b) => (
-                  <option value={String(b.id)} selected={t.bill_id === b.id}>{b.name} ({b.code})</option>
-                ))}
-              </select>
-              <button type="submit">Save</button>
-              {view === "unmatched" && (
-                <button type="submit" name="ignore" value="1" class="link" style="padding:0 6px">Ignore</button>
+              <AllocationChips t={t} />
+              {simple && !t.ignored ? (
+                <form class="assign" method="post" action={`${editUrl}/assign`}>
+                  <input type="hidden" name="back" value={view} />
+                  <select name="bill_id" aria-label="Assign to bill">
+                    <BillOptions bills={bills} selected={t.allocations[0]?.bill_id ?? null} />
+                  </select>
+                  <button type="submit">Save</button>
+                  <a class="btn" href={editUrl}>Split</a>
+                  {view === "unmatched" && (
+                    <button type="submit" class="link" formaction={`${editUrl}/ignore`} name="ignored" value="1"
+                      style="padding:0 4px">Ignore</button>
+                  )}
+                </form>
+              ) : (
+                <div class="assign"><a class="btn" href={editUrl}>Edit</a></div>
               )}
-            </form>
-          </div>
-        ))}
+            </div>
+          );
+        })}
       </div>
     )}
   </Layout>
 );
+
+const SPLIT_JS = `document.addEventListener('click',e=>{if(!e.target.closest('[data-add-row]'))return;e.preventDefault();
+const rows=document.getElementById('split-rows');const t=rows.querySelector('.split-row:last-child');const n=t.cloneNode(true);
+n.querySelectorAll('input').forEach(i=>i.value='');n.querySelectorAll('select[name=bill]').forEach(s=>s.value='');rows.appendChild(n);});`;
+
+export const TransactionEdit: FC<{ t: TxnWithAllocations; bills: Bill[]; error?: string | null; flash?: string | null }> = ({
+  t, bills, error, flash,
+}) => {
+  const total = Math.abs(t.amount_cents);
+  const defaultKind = t.amount_cents >= 0 ? "in" : "out";
+  const rows: { bill_id: number | null; amount: string; kind: string }[] = t.allocations.map((a) => ({
+    bill_id: a.bill_id,
+    amount: (a.amount_cents / 100).toFixed(2),
+    kind: a.kind,
+  }));
+  while (rows.length < 2) rows.push({ bill_id: null, amount: "", kind: defaultKind });
+  const note = t.allocations.find((a) => a.note)?.note ?? "";
+  return (
+    <Layout title="Edit payment" role="admin" nav="txns" flash={flash}>
+      <a class="btn" href="/transactions?view=all" style="margin-bottom:14px"><UiIcon name="back" size={16} />Payments</a>
+      <div class="card">
+        <div class="pay" style="padding:0;border:none">
+          <Avatar name={t.description ?? "?"} />
+          <div class="who">
+            <strong>{t.description}</strong>
+            <div class="sub">
+              {fmtDateTime(t.created_at)}
+              {t.message ? <> · ref <span class="code">{t.message}</span></> : " · no reference"}
+              {t.transfer_account_id ? " · from your own account" : ""}
+            </div>
+          </div>
+          <span class={`money tnum ${t.amount_cents > 0 ? "in" : "out"}`}>
+            {t.amount_cents > 0 ? "+" : ""}{formatCents(t.amount_cents)}
+          </span>
+        </div>
+        <AllocationChips t={t} />
+      </div>
+
+      <div class="section-head"><h2>Assign to bills</h2></div>
+      {error && <div class="notice">{error}</div>}
+      <form class="card" method="post" action={`/transactions/${encodeURIComponent(t.id)}/split`}>
+        <p class="hint" style="margin-top:0">
+          One row = whole payment to one bill (leave the amount blank). Add rows to split it. Anything left over stays
+          in Unmatched. "Bill payment" marks the bill as paid.
+        </p>
+        <div id="split-rows">
+          {rows.map((r) => (
+            <div class="split-row">
+              <select name="bill" aria-label="Bill"><BillOptions bills={bills} selected={r.bill_id} /></select>
+              <input name="amount" inputmode="decimal" placeholder={formatCents(total)} value={r.amount} aria-label="Amount" />
+              <select name="kind" aria-label="Type">
+                <option value="in" selected={r.kind === "in"}>Towards bill</option>
+                <option value="out" selected={r.kind === "out"}>Bill payment</option>
+              </select>
+            </div>
+          ))}
+        </div>
+        <button type="button" class="link" data-add-row style="margin-top:8px">+ Add another row</button>
+        <label for="note">Note <span class="muted" style="font-weight:500">(optional, shown on the bill)</span></label>
+        <input id="note" name="note" maxlength={140} value={note} placeholder="Split between electricity and wifi" />
+        <div class="row" style="margin-top:16px">
+          <button class="primary" type="submit">Save</button>
+        </div>
+      </form>
+
+      <div class="section-head"><h2>Other options</h2></div>
+      <div class="row">
+        <form class="inline" method="post" action={`/transactions/${encodeURIComponent(t.id)}/reset`}>
+          <button type="submit" title="Forget manual changes and match by reference again">Reset to automatic</button>
+        </form>
+        <form class="inline" method="post" action={`/transactions/${encodeURIComponent(t.id)}/ignore`}>
+          <input type="hidden" name="ignored" value={t.ignored ? "0" : "1"} />
+          <button type="submit">{t.ignored ? "Stop ignoring" : "Ignore this payment"}</button>
+        </form>
+      </div>
+      <p class="hint">Manual changes stick: syncing with Up won't undo them. "Reset to automatic" hands control back.</p>
+      <script>{raw(SPLIT_JS)}</script>
+    </Layout>
+  );
+};
 
 const Step: FC<{ n: number; done: boolean; title: string; children?: Child }> = ({ n, done, title, children }) => (
   <div class="card step">

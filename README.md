@@ -17,9 +17,26 @@ Runs on Cloudflare Workers (Hono) with a D1 (SQLite) database, all on the free p
 | Copy a bill's reference code | yes | yes |
 | Add / edit / archive / delete bills | yes | no |
 | Unmatched payments, Sync, Setup | yes | no |
+| Manual overrides (below) | yes | no |
 
 The role is stored in a signed, http-only cookie (30 days) and checked on the server for every admin
 route, so the viewer can't get around it by guessing URLs. Removing `VIEWER_PASSWORD` logs the viewer out.
+
+## Admin overrides
+
+Cogs can correct anything the automatic matching gets wrong:
+
+- **Reassign** any payment to a different bill (current or past), or take it off a bill: Payments page dropdown.
+- **Split** one payment across several bills (e.g. $150 → $100 Electricity + $50 Internet). Any leftover stays
+  in Unmatched as "not assigned".
+- **Switch** a payment between *towards the bill* and *bill payment* (marks the bill paid).
+- **Manual entries** on a bill page: cash or payments from another account, with who / date / note. Deletable.
+- **Mark as paid** by hand (e.g. paid by card from another account), and undo it.
+- **Ignore** a payment, or **Reset to automatic** to throw away manual changes and match by reference again.
+
+Anything set by hand shows a **MANUAL** tag (the roommate can see it) and is never changed by syncs or webhooks.
+Under the hood each bill's total comes from the `allocations` table: one row per "this much of this payment
+counts towards this bill", with manual entries being allocations that have no bank transaction.
 
 ## How matching works
 

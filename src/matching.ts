@@ -46,8 +46,13 @@ export function matchBill(
 
 export type BillStatus = "open" | "funded" | "paid";
 
-export function billStatus(collected: number, due: number, paidOut: number): BillStatus {
-  if (paidOut > 0) return "paid";
+export function billStatus(
+  collected: number,
+  due: number,
+  paidOut: number,
+  markedPaid: string | null | boolean = null,
+): BillStatus {
+  if (paidOut > 0 || markedPaid) return "paid";
   if (collected >= due && due > 0) return "funded";
   return "open";
 }
@@ -72,4 +77,38 @@ export function formatCents(cents: number): string {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   })}`;
+}
+
+export interface SplitRow {
+  bill_id: number;
+  amount_cents: number;
+  kind: "in" | "out";
+}
+
+/**
+ * Turn the rows of the "split / classify" form into allocations.
+ * Blank rows are skipped. Amounts can't add up to more than the transaction.
+ * A single row with a blank amount means "the whole transaction".
+ */
+export function parseSplits(
+  rows: { bill: string; amount: string; kind: string }[],
+  txnAbsCents: number,
+): { splits: SplitRow[] } | { error: string } {
+  const filled = rows.filter((r) => r.bill.trim() !== "");
+  const splits: SplitRow[] = [];
+  for (const r of filled) {
+    const bill_id = Number(r.bill);
+    if (!Number.isInteger(bill_id) || bill_id <= 0) return { error: "Pick a bill for each row." };
+    const kind = r.kind === "out" ? "out" : "in";
+    let amount_cents: number | null;
+    if (r.amount.trim() === "" && filled.length === 1) amount_cents = txnAbsCents;
+    else amount_cents = parseDollars(r.amount);
+    if (amount_cents === null) return { error: `"${r.amount}" isn't a valid amount.` };
+    splits.push({ bill_id, amount_cents, kind });
+  }
+  const total = splits.reduce((s, x) => s + x.amount_cents, 0);
+  if (total > txnAbsCents) {
+    return { error: `That adds up to ${formatCents(total)}, but the payment was only ${formatCents(txnAbsCents)}.` };
+  }
+  return { splits };
 }

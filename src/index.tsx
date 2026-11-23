@@ -2,25 +2,33 @@ import { Hono } from "hono";
 import { LOGO_SVG, isBillIcon } from "./art";
 import { endSession, requireAdmin, requireLogin, roleForPassword, startSession, type AppEnv } from "./auth";
 import {
-  assignTransaction,
+  addManualEntry,
   codeInUse,
   countUnmatched,
   createBill,
   deleteBill,
+  deleteManualEntry,
   deleteSetting,
   deleteTransactionsNotIn,
   getBill,
+  getTransaction,
+  kindForAmount,
+  listAllBillsBrief,
+  listBillEntries,
   getSetting,
   listBills,
   listTransactions,
   rematchUnassigned,
+  resetToAutomatic,
+  setAllocations,
   setBillArchived,
   setIgnored,
+  setMarkedPaid,
   setSetting,
   updateBill,
   type Env,
 } from "./db";
-import { normalizeCode, parseDollars } from "./matching";
+import { normalizeCode, parseDollars, parseSplits } from "./matching";
 import { handleUpWebhook, syncRecent, upClient } from "./sync";
 import type { UpAccount, UpWebhook } from "./up";
 import {
@@ -30,6 +38,7 @@ import {
   Dashboard,
   LoginPage,
   SetupPage,
+  TransactionEdit,
   TransactionsPage,
 } from "./views";
 
@@ -75,7 +84,7 @@ app.post("/logout", (c) => {
 // ---------- everything below needs login; admin-only areas need the admin role ----------
 
 app.use("*", requireLogin);
-for (const path of ["/sync", "/bills/new", "/bills/:id/edit", "/bills/:id/archive", "/bills/:id/delete", "/transactions", "/transactions/*", "/setup", "/setup/*"]) {
+for (const path of ["/sync", "/bills/new", "/bills/:id/edit", "/bills/:id/archive", "/bills/:id/delete", "/bills/:id/paid", "/bills/:id/entries", "/entries/*", "/transactions", "/transactions/*", "/setup", "/setup/*"]) {
   app.use(path, requireAdmin);
 }
 app.post("/bills", requireAdmin);
@@ -165,8 +174,8 @@ app.get("/bills/:id", async (c) => {
   const id = Number(c.req.param("id"));
   const b = await getBill(c.env.DB, id);
   if (!b) return c.notFound();
-  const txns = await listTransactions(c.env.DB, { billId: id });
-  return c.html(<BillDetail role={c.get("role")} b={b} txns={txns} flash={flash(c)} />);
+  const entries = await listBillEntries(c.env.DB, id);
+  return c.html(<BillDetail role={c.get("role")} b={b} entries={entries} flash={flash(c)} />);
 });
 
 app.get("/bills/:id/edit", async (c) => {
@@ -207,25 +216,98 @@ app.post("/bills/:id/delete", async (c) => {
   return c.redirect(withMsg("/", "Bill deleted."));
 });
 
-// ---------- transactions ----------
+// ---------- bill overrides (admin) ----------
+
+app.post("/bills/:id/paid", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!(await getBill(c.env.DB, id))) return c.notFound();
+  const paid = (await c.req.parseBody()).paid === "1";
+  await setMarkedPaid(c.env.DB, id, paid);
+  return c.redirect(withMsg(`/bills/${id}`, paid ? "Marked as paid." : "No longer marked as paid."));
+});
+
+app.post("/bills/:id/entries", async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!(await getBill(c.env.DB, id))) return c.notFound();
+  const f = await c.req.parseBody();
+  const amount = parseDollars(String(f.amount ?? ""));
+  if (amount === null) return c.redirect(withMsg(`/bills/${id}`, "That amount didn't look right. Try something like 50 or 50.00."));
+  const dateStr = String(f.date ?? "");
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? `${dateStr}T12:00:00.000Z` : new Date().toISOString();
+  const clean = (v: unknown, max: number) => String(v ?? "").trim().slice(0, max) || null;
+  await addManualEntry(c.env.DB, {
+    bill_id: id,
+    amount_cents: amount,
+    kind: f.kind === "out" ? "out" : "in",
+    payer: clean(f.payer, 60),
+    note: clean(f.note, 140),
+    date,
+  });
+  return c.redirect(withMsg(`/bills/${id}`, "Manual entry added."));
+});
+
+app.post("/entries/:id/delete", async (c) => {
+  const billId = await deleteManualEntry(c.env.DB, Number(c.req.param("id")));
+  return c.redirect(billId ? withMsg(`/bills/${billId}`, "Entry deleted.") : "/");
+});
+
+// ---------- transactions (admin) ----------
 
 app.get("/transactions", async (c) => {
   const view = c.req.query("view") === "all" ? "all" : "unmatched";
-  const [txns, bills] = await Promise.all([listTransactions(c.env.DB, view), listBills(c.env.DB)]);
+  const [txns, bills] = await Promise.all([listTransactions(c.env.DB, view), listAllBillsBrief(c.env.DB)]);
   return c.html(<TransactionsPage txns={txns} bills={bills} view={view} flash={flash(c)} />);
 });
 
+app.get("/transactions/:id", async (c) => {
+  const t = await getTransaction(c.env.DB, c.req.param("id"));
+  if (!t) return c.notFound();
+  return c.html(<TransactionEdit t={t} bills={await listAllBillsBrief(c.env.DB)} flash={flash(c)} />);
+});
+
+/** Quick assign from the list: the whole payment to one bill (or none). */
 app.post("/transactions/:id/assign", async (c) => {
-  const id = c.req.param("id");
+  const t = await getTransaction(c.env.DB, c.req.param("id"));
+  if (!t) return c.notFound();
   const f = await c.req.parseBody();
   const back = f.back === "all" ? "/transactions?view=all" : "/transactions";
-  if (f.ignore === "1") {
-    await setIgnored(c.env.DB, id, true);
-    return c.redirect(withMsg(back, "Ignored."));
-  }
   const billId = f.bill_id ? Number(f.bill_id) : null;
-  await assignTransaction(c.env.DB, id, billId);
-  return c.redirect(withMsg(back, billId ? "Assigned." : "Removed from bill."));
+  const splits = billId
+    ? [{ bill_id: billId, amount_cents: Math.abs(t.amount_cents), kind: kindForAmount(t.amount_cents) }]
+    : [];
+  await setAllocations(c.env.DB, t, splits, null);
+  return c.redirect(withMsg(back, billId ? "Assigned." : "Removed from its bill."));
+});
+
+/** Full override: split across bills and/or switch between money-in and bill payment. */
+app.post("/transactions/:id/split", async (c) => {
+  const t = await getTransaction(c.env.DB, c.req.param("id"));
+  if (!t) return c.notFound();
+  const f = await c.req.parseBody({ all: true });
+  const list = (v: unknown) => (Array.isArray(v) ? v : v === undefined ? [] : [v]).map((x) => String(x));
+  const bills = list(f.bill), amounts = list(f.amount), kinds = list(f.kind);
+  const rows = bills.map((bill, i) => ({ bill, amount: amounts[i] ?? "", kind: kinds[i] ?? "in" }));
+  const parsed = parseSplits(rows, Math.abs(t.amount_cents));
+  if ("error" in parsed) {
+    return c.html(<TransactionEdit t={t} bills={await listAllBillsBrief(c.env.DB)} error={parsed.error} />, 400);
+  }
+  const note = String(Array.isArray(f.note) ? f.note[0] : f.note ?? "").trim().slice(0, 140) || null;
+  await setAllocations(c.env.DB, t, parsed.splits, note);
+  return c.redirect(withMsg(`/transactions/${encodeURIComponent(t.id)}`, "Saved. This payment is now set by hand."));
+});
+
+app.post("/transactions/:id/reset", async (c) => {
+  const id = c.req.param("id");
+  await resetToAutomatic(c.env.DB, id);
+  return c.redirect(withMsg(`/transactions/${encodeURIComponent(id)}`, "Back to automatic matching."));
+});
+
+app.post("/transactions/:id/ignore", async (c) => {
+  const id = c.req.param("id");
+  const ignored = (await c.req.parseBody()).ignored === "1";
+  await setIgnored(c.env.DB, id, ignored);
+  if (!ignored) await resetToAutomatic(c.env.DB, id);
+  return c.redirect(withMsg(ignored ? "/transactions" : `/transactions/${encodeURIComponent(id)}`, ignored ? "Ignored." : "No longer ignored."));
 });
 
 // ---------- setup ----------

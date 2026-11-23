@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { billStatus, formatCents, matchBill, normalizeCode, parseDollars, percent, tokens } from "../src/matching";
+import { billStatus, formatCents, matchBill, normalizeCode, parseDollars, parseSplits, percent, tokens } from "../src/matching";
 import { hmacHex, verifyUpSignature } from "../src/up";
 
 const bills = [
@@ -72,6 +72,8 @@ describe("helpers", () => {
     expect(billStatus(5000, 10000, 0)).toBe("open");
     expect(billStatus(10000, 10000, 0)).toBe("funded");
     expect(billStatus(10000, 10000, 10000)).toBe("paid");
+    expect(billStatus(0, 10000, 0, "2026-11-23T00:00:00Z")).toBe("paid");
+    expect(billStatus(0, 10000, 0, null)).toBe("open");
     expect(percent(5000, 10000)).toBe(50);
     expect(percent(15000, 10000)).toBe(100);
   });
@@ -86,5 +88,38 @@ describe("verifyUpSignature", () => {
     expect(await verifyUpSignature(body + " ", sig, "s3cret")).toBe(false);
     expect(await verifyUpSignature(body, sig, "other")).toBe(false);
     expect(await verifyUpSignature(body, null, "s3cret")).toBe(false);
+  });
+});
+
+describe("parseSplits", () => {
+  const row = (bill: string, amount: string, kind = "in") => ({ bill, amount, kind });
+
+  it("splits one payment across bills", () => {
+    expect(parseSplits([row("1", "100"), row("2", "50"), row("", "")], 15000)).toEqual({
+      splits: [
+        { bill_id: 1, amount_cents: 10000, kind: "in" },
+        { bill_id: 2, amount_cents: 5000, kind: "in" },
+      ],
+    });
+  });
+
+  it("uses the whole amount when there's one row with no amount", () => {
+    expect(parseSplits([row("3", "", "out")], 20000)).toEqual({
+      splits: [{ bill_id: 3, amount_cents: 20000, kind: "out" }],
+    });
+  });
+
+  it("allows leaving part of a payment unassigned", () => {
+    expect(parseSplits([row("1", "40")], 15000)).toEqual({ splits: [{ bill_id: 1, amount_cents: 4000, kind: "in" }] });
+  });
+
+  it("rejects more than the payment, bad amounts, and blank amounts in multi-row splits", () => {
+    expect(parseSplits([row("1", "100"), row("2", "60")], 15000)).toHaveProperty("error");
+    expect(parseSplits([row("1", "abc")], 15000)).toHaveProperty("error");
+    expect(parseSplits([row("1", ""), row("2", "10")], 15000)).toHaveProperty("error");
+  });
+
+  it("treats no rows as 'no bill'", () => {
+    expect(parseSplits([row("", "")], 15000)).toEqual({ splits: [] });
   });
 });
