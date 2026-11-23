@@ -4,7 +4,7 @@
   "description": "Tracks roommate bill payments into an Up Bank account",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "deploy": "wrangler d1 migrations apply cogs-tracker --remote && wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply cogs-tracker --local",
     "db:migrate:remote": "wrangler d1 migrations apply cogs-tracker --remote",
     "test": "vitest run",

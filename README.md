@@ -36,7 +36,8 @@ Cogs can correct anything the automatic matching gets wrong:
 
 **Payment screenshots:** when marking a bill paid (or any time after), cogs can attach a screenshot of the
 payment. The browser shrinks it first (max 1200px wide, WebP or JPEG, usually 80-150 KB) and it's stored in the
-D1 database (`receipts` table), so there's nothing extra to set up. Both logins can view it from the bill page or
+D1 database (`receipts` table), so there's no extra service to set up (the table comes from a migration, which
+`npm run deploy` applies first). Both logins can view it from the bill page or
 the **Past bills** tab. The server only accepts images up to 1 MB.
 
 Anything set by hand shows a **MANUAL** tag (the roommate can see it) and is never changed by syncs or webhooks.
@@ -96,7 +97,7 @@ npx wrangler secret put VIEWER_PASSWORD # roommate's password: view only (option
 npx wrangler secret put SESSION_SECRET  # any long random string, e.g. `openssl rand -hex 32`
 
 # 3. Deploy
-npm run deploy                          # prints https://cogs-tracker.<you>.workers.dev
+npm run deploy                          # applies migrations, then deploys; prints https://cogs-tracker.<you>.workers.dev
 ```
 
 Then open the site, log in, and go to **Setup**:

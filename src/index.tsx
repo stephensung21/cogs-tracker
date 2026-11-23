@@ -274,14 +274,14 @@ app.post("/bills/:id/paid", async (c) => {
   if (paid && form.checked !== "1") {
     return c.redirect(withMsg(`/bills/${id}`, "Tick “Receipt has been checked and paid” first."));
   }
+  // The screenshot is optional, so a bad one doesn't stop the bill being marked paid.
   const file = uploadedFile(form.receipt);
-  if (paid && file) {
-    const err = checkReceipt(file.type, file.size);
-    if (err) return c.redirect(withMsg(`/bills/${id}`, err));
-    await saveReceipt(c.env.DB, id, file.type, await file.arrayBuffer());
-  }
+  const fileErr = paid && file ? checkReceipt(file.type, file.size) : null;
+  if (paid && file && !fileErr) await saveReceipt(c.env.DB, id, file.type, await file.arrayBuffer());
   await setMarkedPaid(c.env.DB, id, paid);
-  return c.redirect(withMsg(`/bills/${id}`, paid ? "Marked as paid. Receipt checked." : "No longer marked as paid."));
+  const msg = !paid ? "No longer marked as paid."
+    : fileErr ? `Marked as paid, but the screenshot wasn't saved: ${fileErr}` : "Marked as paid. Receipt checked.";
+  return c.redirect(withMsg(`/bills/${id}`, msg));
 });
 
 /** A file from a multipart form, or null when the field was left empty. */
@@ -311,7 +311,13 @@ app.get("/bills/:id/receipt", async (c) => {
   const r = await getReceipt(c.env.DB, Number(c.req.param("id")));
   if (!r) return c.notFound();
   return new Response(r.data, {
-    headers: { "Content-Type": r.mime, "Cache-Control": "private, max-age=3600", "X-Content-Type-Options": "nosniff" },
+    headers: {
+      "Content-Type": r.mime,
+      // Not cached: the URL stays the same when a screenshot is replaced or removed.
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Security-Policy": "default-src 'none'; img-src 'self'; sandbox",
+    },
   });
 });
 

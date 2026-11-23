@@ -300,21 +300,27 @@ try{localStorage.setItem('theme',t)}catch(e){}
 var m=document.querySelector('meta[name=theme-color]');if(m)m.setAttribute('content',t==='dark'?'#16130F':'#FBF7F0');});`;
 
 /**
- * Shrinks a picked screenshot in the browser before upload: max 1200px wide / 3000px tall, WebP (JPEG where the browser can't
- * make WebP, e.g. Safari), quality 0.8, or 0.6 if still over 900 KB. A 1-3 MB phone screenshot ends up around 80-150 KB.
+ * Shrinks a picked screenshot in the browser before upload: max 1200px wide / 6000px tall, WebP (JPEG where the browser can't
+ * make WebP, e.g. Safari), quality 0.8, or 0.6 if still over 900 KB. Submit buttons wait until it's done; a file
+ * it can't shrink under 1 MB (or HEIC it can't read) is cleared with a message instead of failing on the server. A 1-3 MB phone screenshot ends up around 80-150 KB.
  */
 const SHRINK_JS = `document.addEventListener('change',async function(e){var inp=e.target;if(!inp.matches||!inp.matches('input[data-shrink]'))return;
-var f=inp.files&&inp.files[0];if(!f||!f.type.startsWith('image/'))return;
-var lbl=inp.closest('form').querySelector('[data-file-label]');if(lbl)lbl.textContent='Shrinking…';
-try{var bmp=await createImageBitmap(f);var s=Math.min(1,1200/bmp.width,3000/bmp.height);var c=document.createElement('canvas');
-c.width=Math.round(bmp.width*s);c.height=Math.round(bmp.height*s);c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
+var f=inp.files&&inp.files[0];if(!f)return;var form=inp.closest('form');var lbl=form.querySelector('[data-file-label]');
+var btns=form.querySelectorAll('button[type=submit]');var say=function(t){if(lbl)lbl.textContent=t;else if(t)alert(t)};
+var done=function(ok,msg){btns.forEach(function(b){b.disabled=false});if(!ok){inp.value='';say(msg);return}
+if(lbl)lbl.textContent='Screenshot added ('+Math.max(1,Math.round(inp.files[0].size/1024))+' KB)';if(inp.hasAttribute('data-autosubmit'))form.submit()};
+if(['image/png','image/jpeg','image/webp','image/gif','image/bmp','image/heic','image/heif'].indexOf(f.type)<0){done(false,'Use a PNG, JPEG or WebP screenshot.');return}
+btns.forEach(function(b){b.disabled=true});if(lbl)lbl.textContent='Shrinking…';
+try{var bmp=await createImageBitmap(f);var s=Math.min(1,1200/bmp.width,6000/bmp.height);var c=document.createElement('canvas');
+c.width=Math.round(bmp.width*s);c.height=Math.round(bmp.height*s);var x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);
+x.drawImage(bmp,0,0,c.width,c.height);
 var enc=function(t,q){return new Promise(function(r){c.toBlob(r,t,q)})};var b=await enc('image/webp',0.8);
 var t=b&&b.type==='image/webp'?'image/webp':'image/jpeg';if(t!=='image/webp')b=await enc(t,0.8);
 if(b&&b.size>900000)b=await enc(t,0.6);
-if(b&&b.size<f.size){var dt=new DataTransfer();dt.items.add(new File([b],'screenshot.'+(b.type==='image/webp'?'webp':'jpg'),{type:b.type}));inp.files=dt.files;}
+if(b&&b.size<f.size){var dt=new DataTransfer();dt.items.add(new File([b],'screenshot.'+(t==='image/webp'?'webp':'jpg'),{type:t}));inp.files=dt.files;}
 }catch(err){}
-var g=inp.files[0];if(lbl)lbl.textContent='Screenshot added ('+Math.max(1,Math.round(g.size/1024))+' KB)';
-if(inp.hasAttribute('data-autosubmit'))inp.form.submit();});`;
+var g=inp.files[0];if(['image/png','image/jpeg','image/webp'].indexOf(g.type)<0||g.size>1000000){done(false,"Couldn't shrink that one. Try a smaller PNG or JPEG screenshot.");return}
+done(true);});`;
 
 const COPY_JS = `document.addEventListener('click',e=>{const b=e.target.closest('[data-copy]');if(!b)return;e.preventDefault();
 navigator.clipboard&&navigator.clipboard.writeText(b.dataset.copy).then(()=>{const t=b.querySelector('.copy-label');if(t){const o=t.textContent;t.textContent='Copied!';setTimeout(()=>t.textContent=o,1200)}})});`;
