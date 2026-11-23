@@ -10,7 +10,7 @@ crons = ["17 19 * * *"]
 binding = "DB"
 database_name = "cogs-tracker"
 # Replace with the id printed by `npx wrangler d1 create cogs-tracker`
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "a90fdc5a-0c42-4837-abf3-d90fdf481ed7"
 migrations_dir = "migrations"
 
 [vars]
