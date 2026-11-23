@@ -1,4 +1,5 @@
 import { matchBill, type BillCode } from "./matching";
+import { isShort, missedPeriods, periodStartFor, pickPeriod, sydneyDate, type Frequency, type SeriesPeriod } from "./periods";
 import type { UpTransaction } from "./up";
 
 export interface Env {
@@ -48,6 +49,13 @@ export interface Bill {
   icon: string | null;
   archived: number;
   created_at: string;
+  frequency: Frequency | null;
+  approximate: number;
+  amount_confirmed: number;
+  series_id: number | null;
+  period_start: string | null;
+  usual_amount: number | null;
+  shortfall_dismissed_at: string | null;
 }
 
 export interface BillWithTotals extends Bill {
@@ -119,27 +127,53 @@ export interface BillFields {
   amount_due: number;
   due_date: string | null;
   icon: string | null;
+  frequency: Frequency | null;
+  approximate: boolean;
+  usual_amount: number;
 }
 
-export async function createBill(
-  db: D1Database,
-  b: BillFields,
-): Promise<number> {
+/** series_id / period_start for a bill that repeats, or nulls for a one-off. */
+function seriesFields(b: BillFields, id: number, existingSeries: number | null) {
+  if (!b.frequency || !b.due_date) return { series_id: null, period_start: null };
+  const anchor = Number(b.due_date.slice(8, 10));
+  return { series_id: existingSeries ?? id, period_start: periodStartFor(b.due_date, b.frequency, anchor) };
+}
+
+export async function createBill(db: D1Database, b: BillFields): Promise<number> {
   const r = await db
-    .prepare("INSERT INTO bills (name, code, amount_due, due_date, icon) VALUES (?, ?, ?, ?, ?) RETURNING id")
-    .bind(b.name, b.code, b.amount_due, b.due_date, b.icon)
+    .prepare(
+      `INSERT INTO bills (name, code, amount_due, due_date, icon, frequency, approximate, usual_amount)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING id`,
+    )
+    .bind(b.name, b.code, b.amount_due, b.due_date, b.icon, b.frequency, b.approximate ? 1 : 0, b.usual_amount)
     .first<{ id: number }>();
-  return r!.id;
+  const id = r!.id;
+  const sf = seriesFields(b, id, null);
+  if (sf.series_id !== null) {
+    await db.prepare("UPDATE bills SET series_id = ?, period_start = ? WHERE id = ?").bind(sf.series_id, sf.period_start, id).run();
+  }
+  return id;
 }
 
-export async function updateBill(
-  db: D1Database,
-  id: number,
-  b: BillFields,
-): Promise<void> {
+/**
+ * Edit one period. Changing this period's amount confirms it (no longer shown as an estimate).
+ * Turning a one-off bill into a repeating one starts a series at this bill.
+ */
+export async function updateBill(db: D1Database, id: number, b: BillFields): Promise<void> {
+  const cur = await db.prepare("SELECT amount_due, amount_confirmed, series_id, period_start FROM bills WHERE id = ?")
+    .bind(id).first<{ amount_due: number; amount_confirmed: number; series_id: number | null; period_start: string | null }>();
+  if (!cur) return;
+  const confirmed = cur.amount_confirmed === 1 || cur.amount_due !== b.amount_due ? 1 : 0;
+  // Keep an existing period's dates unless it has none yet (rolled-over periods already have them).
+  const sf = seriesFields(b, id, cur.series_id);
+  const periodStart = sf.series_id === null ? null : cur.series_id !== null && cur.period_start ? cur.period_start : sf.period_start;
   await db
-    .prepare("UPDATE bills SET name = ?, code = ?, amount_due = ?, due_date = ?, icon = ? WHERE id = ?")
-    .bind(b.name, b.code, b.amount_due, b.due_date, b.icon, id)
+    .prepare(
+      `UPDATE bills SET name = ?, code = ?, amount_due = ?, due_date = ?, icon = ?, frequency = ?, approximate = ?,
+         usual_amount = ?, amount_confirmed = ?, series_id = ?, period_start = ? WHERE id = ?`,
+    )
+    .bind(b.name, b.code, b.amount_due, b.due_date, b.icon, b.frequency, b.approximate ? 1 : 0, b.usual_amount,
+      confirmed, sf.series_id, periodStart, id)
     .run();
 }
 
@@ -154,6 +188,96 @@ export async function deleteBill(db: D1Database, id: number): Promise<void> {
     db.prepare("UPDATE transactions SET manual = 0 WHERE manual = 1 AND id NOT IN (SELECT txn_id FROM allocations WHERE txn_id IS NOT NULL)"),
     db.prepare("DELETE FROM bills WHERE id = ?").bind(id),
   ]);
+}
+
+// ---------- recurring bills ----------
+
+/**
+ * Start new periods for repeating bills whose due date has passed (today is a Sydney date).
+ * The old period is archived and the next one created from it; if several were missed, each is
+ * created in turn (all but the newest already archived). Safe to run any number of times.
+ */
+export async function rollOver(db: D1Database, today: string): Promise<number> {
+  const due = await db
+    .prepare(
+      `SELECT b.*, (SELECT f.due_date FROM bills f WHERE f.id = b.series_id) AS first_due
+       FROM bills b WHERE b.archived = 0 AND b.frequency IS NOT NULL AND b.due_date IS NOT NULL AND b.due_date < ?`,
+    )
+    .bind(today)
+    .all<Bill & { first_due: string | null }>();
+  let created = 0;
+  for (const b of due.results) {
+    const anchor = Number((b.first_due ?? b.due_date!).slice(8, 10));
+    const periods = missedPeriods(b.due_date!, b.frequency!, anchor, today);
+    if (periods.length === 0) continue;
+    const series = b.series_id ?? b.id;
+    const amount = b.usual_amount ?? b.amount_due;
+    const stmts: D1PreparedStatement[] = [
+      // A batch runs as one transaction; the NOT EXISTS guards make a second, overlapping run a no-op.
+      db.prepare("UPDATE bills SET archived = 1, series_id = ? WHERE id = ?").bind(series, b.id),
+    ];
+    periods.forEach((p, i) => {
+      const last = i === periods.length - 1;
+      stmts.push(
+        db
+          .prepare(
+            `INSERT INTO bills (name, code, amount_due, due_date, icon, archived, frequency, approximate,
+               amount_confirmed, series_id, period_start, usual_amount)
+             SELECT ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?
+             WHERE NOT EXISTS (SELECT 1 FROM bills WHERE series_id = ? AND due_date = ?)`,
+          )
+          .bind(b.name, b.code, amount, p.due, b.icon, last ? 0 : 1, b.frequency, b.approximate, series,
+            p.start, amount, series, p.due),
+      );
+    });
+    await db.batch(stmts);
+    created += periods.length;
+  }
+  return created;
+}
+
+/** Map an automatic match on a repeating bill to the right period of that bill. */
+async function periodResolver(db: D1Database) {
+  const cache = new Map<number, SeriesPeriod[]>();
+  return async (activeBillId: number, cents: number, createdAt: string): Promise<number> => {
+    const bill = await db.prepare("SELECT series_id FROM bills WHERE id = ?").bind(activeBillId).first<{ series_id: number | null }>();
+    if (!bill?.series_id) return activeBillId;
+    let periods = cache.get(bill.series_id);
+    if (!periods) {
+      const r = await db
+        .prepare(
+          `SELECT b.id, b.period_start, b.due_date, b.archived,
+             (b.marked_paid_at IS NOT NULL OR EXISTS (SELECT 1 FROM allocations a WHERE a.bill_id = b.id AND a.kind = 'out')) AS paid
+           FROM bills b WHERE b.series_id = ? AND b.due_date IS NOT NULL`,
+        )
+        .bind(bill.series_id)
+        .all<{ id: number; period_start: string | null; due_date: string; archived: number; paid: number }>();
+      periods = r.results.map((p) => ({ ...p, paid: p.paid === 1 }));
+      cache.set(bill.series_id, periods);
+    }
+    const kind = kindForAmount(cents);
+    const id = pickPeriod(kind, sydneyDate(createdAt), periods) ?? activeBillId;
+    // Later money-out transactions in the same run must see this period as paid.
+    if (kind === "out") periods = periods.map((p) => (p.id === id ? { ...p, paid: true } : p));
+    cache.set(bill.series_id, periods);
+    return id;
+  };
+}
+
+/** Finished periods that didn't collect their full amount (and weren't dismissed), oldest first. */
+export async function listShortPeriods(db: D1Database, today: string): Promise<BillWithTotals[]> {
+  const r = await db
+    .prepare(
+      `${BILL_TOTALS_SQL} WHERE b.due_date IS NOT NULL AND b.due_date < ? AND b.shortfall_dismissed_at IS NULL
+       GROUP BY b.id ORDER BY b.due_date, b.id`,
+    )
+    .bind(today)
+    .all<BillWithTotals>();
+  return r.results.filter((b) => isShort(b, today));
+}
+
+export async function dismissShortfall(db: D1Database, id: number): Promise<void> {
+  await db.prepare("UPDATE bills SET shortfall_dismissed_at = ? WHERE id = ?").bind(new Date().toISOString(), id).run();
 }
 
 // ---------- transactions & allocations ----------
@@ -216,6 +340,7 @@ export function kindForAmount(cents: number): Kind {
 export async function upsertTransactions(db: D1Database, txns: UpTransaction[]): Promise<void> {
   if (txns.length === 0) return;
   const bills = await activeBillCodes(db);
+  const resolve = await periodResolver(db);
   const stmts: D1PreparedStatement[] = [];
   for (const t of txns) {
     const a = t.attributes;
@@ -257,7 +382,9 @@ export async function upsertTransactions(db: D1Database, txns: UpTransaction[]):
         .bind(Math.abs(cents), kindForAmount(cents), t.id, t.id),
     );
     const billId = matchBill({ message: a.message, rawText: a.rawText, description: a.description }, bills);
-    if (billId !== null) stmts.push(autoAllocateStmt(db, t.id, billId, cents, a.createdAt));
+    if (billId !== null) {
+      stmts.push(autoAllocateStmt(db, t.id, await resolve(billId, cents, a.createdAt), cents, a.createdAt));
+    }
   }
   for (let i = 0; i < stmts.length; i += 60) await db.batch(stmts.slice(i, i + 60));
 }
@@ -291,10 +418,13 @@ export async function rematchUnassigned(db: D1Database): Promise<number> {
          AND NOT EXISTS (SELECT 1 FROM allocations a WHERE a.txn_id = t.id)`,
     )
     .all<Txn>();
+  const resolve = await periodResolver(db);
   const stmts: D1PreparedStatement[] = [];
   for (const t of r.results) {
     const id = matchBill({ message: t.message, rawText: t.raw_text, description: t.description }, bills);
-    if (id !== null) stmts.push(autoAllocateStmt(db, t.id, id, t.amount_cents, t.created_at));
+    if (id !== null) {
+      stmts.push(autoAllocateStmt(db, t.id, await resolve(id, t.amount_cents, t.created_at), t.amount_cents, t.created_at));
+    }
   }
   for (let i = 0; i < stmts.length; i += 60) await db.batch(stmts.slice(i, i + 60));
   return stmts.length;

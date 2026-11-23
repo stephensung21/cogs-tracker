@@ -1,4 +1,5 @@
-import { deleteTransaction, getSetting, setSetting, upsertTransactions, type Env } from "./db";
+import { deleteTransaction, getSetting, rollOver, setSetting, upsertTransactions, type Env } from "./db";
+import { sydneyDate } from "./periods";
 import { UpClient, verifyUpSignature, type UpWebhookEvent } from "./up";
 
 export function upClient(env: Env): UpClient {
@@ -12,6 +13,7 @@ export async function syncRecent(env: Env, days: number): Promise<{ count: numbe
   if (!accountId) throw new Error("No account selected yet - pick one on the Setup page");
   const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
   const txns = await upClient(env).listAccountTransactions(accountId, since);
+  await rollOver(env.DB, sydneyDate(new Date()));
   await upsertTransactions(env.DB, txns);
   await setSetting(env.DB, "last_sync", new Date().toISOString());
   return { count: txns.length };
@@ -58,6 +60,7 @@ export async function handleUpWebhook(
     return { status: 200, body: "ignored: different account" };
   }
 
+  await rollOver(env.DB, sydneyDate(new Date()));
   await upsertTransactions(env.DB, [txn]);
   return { status: 200, body: "ok" };
 }
