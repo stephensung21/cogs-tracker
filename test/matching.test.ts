@@ -71,7 +71,8 @@ describe("helpers", () => {
   it("works out status and percent", () => {
     expect(billStatus(5000, 10000, 0)).toBe("open");
     expect(billStatus(10000, 10000, 0)).toBe("funded");
-    expect(billStatus(10000, 10000, 10000)).toBe("paid");
+    expect(billStatus(10000, 10000, 10000)).toBe("used");
+    expect(billStatus(10000, 10000, 10000, "2026-11-23T00:00:00Z")).toBe("paid");
     expect(billStatus(0, 10000, 0, "2026-11-23T00:00:00Z")).toBe("paid");
     expect(billStatus(0, 10000, 0, null)).toBe("open");
     expect(percent(5000, 10000)).toBe(50);

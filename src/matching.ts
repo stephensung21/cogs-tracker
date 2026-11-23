@@ -44,7 +44,8 @@ export function matchBill(
   return null;
 }
 
-export type BillStatus = "open" | "funded" | "paid";
+/** open = collecting, funded = ready to pay, used = money taken out, paid = admin checked the receipt. */
+export type BillStatus = "open" | "funded" | "used" | "paid";
 
 export function billStatus(
   collected: number,
@@ -52,7 +53,8 @@ export function billStatus(
   paidOut: number,
   markedPaid: string | null | boolean = null,
 ): BillStatus {
-  if (paidOut > 0 || markedPaid) return "paid";
+  if (markedPaid) return "paid";
+  if (paidOut > 0) return "used";
   if (collected >= due && due > 0) return "funded";
   return "open";
 }
