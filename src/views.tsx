@@ -33,7 +33,17 @@ const CSS = `
   --t-mint:#DCF5E6;--t-mint-i:#1F8A55;--t-stone:#EEE9E1;--t-stone-i:#6E665B;
   --display:"Bricolage Grotesque",system-ui,sans-serif;
 }
-@media (prefers-color-scheme:dark){:root{
+/* Dark theme: picked with the header toggle (data-theme on <html>), else follows the device. */
+:root[data-theme=dark]{color-scheme:dark;
+  --bg:#16130F;--bg-dot:#231F19;--card:#201C17;--ink:#F6EFE5;--muted:#A99F91;--line:#332D25;
+  --accent-soft:#45261A;--ok-soft:#173A2B;--blue-soft:#1C2A4A;--warn-soft:#3A2E12;--warn:#F2C25B;--danger:#FF8A70;--track:#2D2820;
+  --shadow:0 1px 0 rgba(0,0,0,.3),0 10px 28px -14px rgba(0,0,0,.7);
+  --t-sun:#3B3013;--t-sun-i:#FFCF5A;--t-sky:#1B2948;--t-sky-i:#8DB2FF;--t-peach:#40251A;--t-peach-i:#FF9B6E;
+  --t-aqua:#123532;--t-aqua-i:#5FD6CF;--t-rose:#3E1E27;--t-rose-i:#FF8FA8;--t-lilac:#2A2145;--t-lilac-i:#B9A2FF;
+  --t-mint:#163526;--t-mint-i:#6FD9A0;--t-stone:#2E2922;--t-stone-i:#BDB3A5;
+}
+:root[data-theme=light]{color-scheme:light}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
   --bg:#16130F;--bg-dot:#231F19;--card:#201C17;--ink:#F6EFE5;--muted:#A99F91;--line:#332D25;
   --accent-soft:#45261A;--ok-soft:#173A2B;--blue-soft:#1C2A4A;--warn-soft:#3A2E12;--warn:#F2C25B;--danger:#FF8A70;--track:#2D2820;
   --shadow:0 1px 0 rgba(0,0,0,.3),0 10px 28px -14px rgba(0,0,0,.7);
@@ -41,6 +51,9 @@ const CSS = `
   --t-aqua:#123532;--t-aqua-i:#5FD6CF;--t-rose:#3E1E27;--t-rose-i:#FF8FA8;--t-lilac:#2A2145;--t-lilac-i:#B9A2FF;
   --t-mint:#163526;--t-mint-i:#6FD9A0;--t-stone:#2E2922;--t-stone-i:#BDB3A5;
 }}
+.theme-btn .sun{display:none}
+:root[data-theme=dark] .theme-btn .sun{display:inline-flex}
+:root[data-theme=dark] .theme-btn .moon{display:none}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
@@ -262,6 +275,17 @@ ${Array.from({ length: 8 }, (_, i) => `.stagger>*:nth-child(${i + 1}){animation-
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}
 `;
 
+/** Runs in <head> so the page never flashes the wrong theme. Choice is saved per device. */
+const THEME_HEAD_JS = `(function(){var t;try{t=localStorage.getItem('theme')}catch(e){}
+if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+document.documentElement.setAttribute('data-theme',t);
+if(t==='dark'){var m=document.querySelector('meta[name=theme-color]');if(m)m.setAttribute('content','#16130F')}})();`;
+
+const THEME_TOGGLE_JS = `document.addEventListener('click',function(e){var b=e.target.closest('[data-theme-toggle]');if(!b)return;
+var r=document.documentElement,t=r.getAttribute('data-theme')==='dark'?'light':'dark';r.setAttribute('data-theme',t);
+try{localStorage.setItem('theme',t)}catch(e){}
+var m=document.querySelector('meta[name=theme-color]');if(m)m.setAttribute('content',t==='dark'?'#16130F':'#FBF7F0');});`;
+
 const COPY_JS = `document.addEventListener('click',e=>{const b=e.target.closest('[data-copy]');if(!b)return;e.preventDefault();
 navigator.clipboard&&navigator.clipboard.writeText(b.dataset.copy).then(()=>{const t=b.querySelector('.copy-label');if(t){const o=t.textContent;t.textContent='Copied!';setTimeout(()=>t.textContent=o,1200)}})});`;
 
@@ -283,6 +307,7 @@ export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Chil
         <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
         <link rel="stylesheet" href={FONTS} />
         <style>{raw(CSS)}</style>
+        <script>{raw(THEME_HEAD_JS)}</script>
       </head>
       <body class={admin ? "has-tabbar" : ""}>
         {p.role && (
@@ -302,6 +327,10 @@ export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Chil
                 {!admin && (
                   <span class="chip"><UiIcon name="eye" size={14} /> View only</span>
                 )}
+                <button type="button" class="icon-btn theme-btn" data-theme-toggle title="Switch light / dark" aria-label="Switch between light and dark mode">
+                  <span class="moon"><UiIcon name="moon" /></span>
+                  <span class="sun"><UiIcon name="sun" /></span>
+                </button>
                 <form class="inline" method="post" action="/logout">
                   <button class="icon-btn" title="Log out" aria-label="Log out"><UiIcon name="logout" /></button>
                 </form>
@@ -321,6 +350,7 @@ export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Chil
           </nav>
         )}
         <script>{raw(COPY_JS)}</script>
+        <script>{raw(THEME_TOGGLE_JS)}</script>
       </body>
     </html>
   );
