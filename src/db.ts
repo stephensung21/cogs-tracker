@@ -548,8 +548,10 @@ export async function listBillEntries(db: D1Database, billId: number): Promise<B
   return r.results;
 }
 
+// Money out with nothing assigned is a "transfer out" (see isTransferOut), not something to sort.
 const UNMATCHED_WHERE = `t.ignored = 0 AND t.amount_cents != 0 AND
-  COALESCE((SELECT SUM(a.amount_cents) FROM allocations a WHERE a.txn_id = t.id), 0) < ABS(t.amount_cents)`;
+  COALESCE((SELECT SUM(a.amount_cents) FROM allocations a WHERE a.txn_id = t.id), 0) < ABS(t.amount_cents) AND
+  NOT (t.amount_cents < 0 AND NOT EXISTS (SELECT 1 FROM allocations a WHERE a.txn_id = t.id))`;
 
 export async function listTransactions(
   db: D1Database,

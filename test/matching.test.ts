@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { billStatus, formatCents, matchBill, normalizeCode, parseDollars, parseSplits, percent, tokens } from "../src/matching";
+import { billStatus, isTransferOut, formatCents, matchBill, normalizeCode, parseDollars, parseSplits, percent, tokens } from "../src/matching";
 import { hmacHex, verifyUpSignature } from "../src/up";
 
 const bills = [
@@ -122,5 +122,17 @@ describe("parseSplits", () => {
 
   it("treats no rows as 'no bill'", () => {
     expect(parseSplits([row("", "")], 15000)).toEqual({ splits: [] });
+  });
+});
+
+describe("isTransferOut", () => {
+  it("is money out with nothing assigned to a bill", () => {
+    expect(isTransferOut({ amount_cents: -8, allocated: 0, ignored: 0 })).toBe(true);
+  });
+  it("is not money in, money out assigned to a bill, or ignored money out", () => {
+    expect(isTransferOut({ amount_cents: 5000, allocated: 0, ignored: 0 })).toBe(false);
+    expect(isTransferOut({ amount_cents: -9000, allocated: 9000, ignored: 0 })).toBe(false);
+    expect(isTransferOut({ amount_cents: -9000, allocated: 4000, ignored: 0 })).toBe(false);
+    expect(isTransferOut({ amount_cents: -8, allocated: 0, ignored: 1 })).toBe(false);
   });
 });

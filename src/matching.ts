@@ -114,3 +114,12 @@ export function parseSplits(
   }
   return { splits };
 }
+
+/**
+ * Money out of the Saver that isn't assigned to any bill (e.g. cogs moving money to the account he pays bills
+ * from). Filed as "Transfer out" rather than left in Unmatched. Partly assigned money out isn't one: its leftover
+ * still needs sorting.
+ */
+export function isTransferOut(t: { amount_cents: number; allocated: number; ignored: number }): boolean {
+  return t.amount_cents < 0 && t.allocated === 0 && !t.ignored;
+}

@@ -16,7 +16,7 @@ import {
 } from "./art";
 import type { Role } from "./auth";
 import type { Bill, BillEntry, BillWithTotals, TxnWithAllocations } from "./db";
-import { billStatus, formatCents, percent } from "./matching";
+import { billStatus, formatCents, isTransferOut, percent } from "./matching";
 import { FREQUENCIES, FREQUENCY_LABELS, isFrequency } from "./periods";
 import type { UpAccount, UpWebhook } from "./up";
 
@@ -936,6 +936,7 @@ const AllocationChips: FC<{ t: TxnWithAllocations }> = ({ t }) => {
   return (
     <div class="chips">
       {t.ignored ? <span class="chip-s muted-chip">Ignored</span> : null}
+      {isTransferOut(t) ? <span class="chip-s muted-chip">Transfer out</span> : null}
       {t.allocations.map((a) => (
         <span class={`chip-s ${a.kind}`}>
           {a.kind === "out" ? "Paid " : "→ "}{a.bill_name}
@@ -964,7 +965,7 @@ export const TransactionsPage: FC<{
     </div>
     <p class="hint" style="margin:-4px 0 16px">
       {view === "unmatched"
-        ? "Payments that aren't (fully) assigned to a bill: typos, your own top-ups, that kind of thing. Pick a bill, split it, or ignore it."
+        ? "Payments that aren't (fully) assigned to a bill: typos, your own top-ups, that kind of thing. Money out with no bill code is filed as a transfer out (see Show all). Pick a bill, split it, or ignore it."
         : "Everything on the bills account. Change any payment's bill, split it, or switch it between money-in and bill payment."}
     </p>
     {txns.length === 0 ? (
@@ -987,7 +988,7 @@ export const TransactionsPage: FC<{
                   <div class="sub">
                     {fmtDateTime(t.created_at)}
                     {t.message ? <> · ref <span class="code">{t.message}</span></> : " · no reference"}
-                    {t.transfer_account_id ? " · from your own account" : ""}
+                    {t.transfer_account_id ? (t.amount_cents < 0 ? " · to your own account" : " · from your own account") : ""}
                     {t.status === "HELD" ? " · pending" : ""}
                   </div>
                 </div>
@@ -1047,7 +1048,7 @@ export const TransactionEdit: FC<{ t: TxnWithAllocations; bills: Bill[]; error?:
             <div class="sub">
               {fmtDateTime(t.created_at)}
               {t.message ? <> · ref <span class="code">{t.message}</span></> : " · no reference"}
-              {t.transfer_account_id ? " · from your own account" : ""}
+              {t.transfer_account_id ? (t.amount_cents < 0 ? " · to your own account" : " · from your own account") : ""}
             </div>
           </div>
           <span class={`money tnum ${t.amount_cents > 0 ? "in" : "out"}`}>

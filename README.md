@@ -71,7 +71,8 @@ Periods roll over on Bills page load, before every sync or webhook, and in the d
 | --- | --- |
 | Money in, reference contains a bill code as a word (`ELEC`, `elec dec`, `Bills: ELEC`) | Counts towards that bill (for a repeating bill: the period the transfer was made in) |
 | Money out with a bill code | Marks the bill **Used** (for a repeating bill: the oldest period with no money out yet). It only becomes **Paid** when cogs ticks "Receipt has been checked and paid" on the bill page |
-| No code, unknown code, or two codes at once | Goes to Unmatched |
+| Money out with no code (e.g. moving money to the account cogs pays from) | Filed as **Transfer out**: shown on All payments, not in Unmatched |
+| Money in with no code, unknown code, or two codes at once | Goes to Unmatched |
 
 The reference is checked first, then Up's raw text, then the description. `ELECTRIC` does **not** match `ELEC`.
 Each Up transaction is stored once by its id, so repeated webhooks or syncs never double-count. A bill
