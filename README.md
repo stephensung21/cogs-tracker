@@ -125,15 +125,10 @@ never sent to the browser. Only transactions from the chosen Saver are stored.
 
 ## Radar (just for fun)
 
-The **plane icon** in the header (next to the light/dark toggle) opens a radar of live planes (starting over the Coral Sea, -16.52, 147.41) on an OpenStreetMap map, using
-the free [OpenSky Network](https://opensky-network.org) API through the Worker (`/radar/planes`, cached 60 s).
-Anonymous access allows about 400 requests a day, shared with other sites on Cloudflare's network. For about 10x
-more, create a free OpenSky account, add an API client, and set:
-
-```bash
-npx wrangler secret put OPENSKY_CLIENT_ID
-npx wrangler secret put OPENSKY_CLIENT_SECRET
-```
+The **plane icon** in the header (next to the light/dark toggle) opens a radar of live planes, starting over the
+Coral Sea (-16.52, 147.41), on an OpenStreetMap map. Plane data comes from [adsb.lol](https://adsb.lol)'s free API
+(ODbL licensed, no key) through the Worker (`/radar/planes`, cached 60 s per area). OpenSky was tried first, but
+it refuses connections from Cloudflare Workers.
 
 ## Local development
 
@@ -161,6 +156,6 @@ src/views.tsx   HTML pages and styles (server-rendered, no frontend framework)
 src/art.tsx     logo, bill icons, illustrations, avatars (inline SVG)
 src/auth.ts     admin / viewer password login with a signed cookie
 src/receipts.ts payment screenshot checks (type, size)
-src/radar.ts    Radar tab: OpenSky fetch, cache and parsing
+src/radar.ts    Radar page: adsb.lol fetch, cache and parsing
 migrations/     database schema
 ```

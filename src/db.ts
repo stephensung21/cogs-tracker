@@ -9,8 +9,6 @@ export interface Env {
   VIEWER_PASSWORD?: string;
   SESSION_SECRET: string;
   UP_API_BASE?: string;
-  OPENSKY_CLIENT_ID?: string; // optional, for the Radar tab's bigger daily allowance
-  OPENSKY_CLIENT_SECRET?: string;
 }
 
 // ---------- settings ----------

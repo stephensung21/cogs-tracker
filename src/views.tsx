@@ -1272,32 +1272,32 @@ const LEAFLET_JS_SRI = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=";
 
 /**
  * Map + planes. Starts over the Coral Sea (-16.52, 147.41, zoom 7), loads planes for the visible area
- * from /radar/planes, refreshes every 60 s while the tab is visible.
+ * from /radar/planes (adsb.lol), refreshes every 60 s while the tab is visible.
  */
 // Map tiles: OpenStreetMap's standard tiles (no key; light personal use is within their tile policy).
 // Dark mode darkens them with a CSS filter rather than switching tile provider.
 const RADAR_JS = `(function(){var el=document.getElementById('radar-map');if(!el||!window.L)return;
 var map=L.map(el,{zoomControl:true,worldCopyJump:true}).setView([-16.52,147.41],7);
-var attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · planes: <a href="https://opensky-network.org">OpenSky</a>';
+var attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · planes: <a href="https://adsb.lol">adsb.lol</a> (ODbL)';
 L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:attr,maxZoom:19}).addTo(map);
 var layer=L.layerGroup().addTo(map),status=document.getElementById('radar-status'),timer=null,seq=0;
 function esc(t){return String(t).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
 function icon(p){var col=p.onGround?'var(--muted)':'var(--accent)';
 return L.divIcon({className:'plane-icon',iconSize:[26,26],iconAnchor:[13,13],
 html:'<svg viewBox="0 0 24 24" width="26" height="26" style="transform:rotate('+(p.track||0)+'deg)"><path fill="'+col+'" stroke="#fff" stroke-width="1" d="M12 2.5c.9 0 1.5.9 1.5 2v5l7 4v2l-7-2v4.5l2.2 1.8V21L12 20l-3.7 1v-1.2l2.2-1.8V13.5l-7 2v-2l7-4v-5c0-1.1.6-2 1.5-2Z"/></svg>'})}
-function popup(p){var name=p.callsign||p.id.toUpperCase();
+function popup(p){var name=p.callsign||p.reg||p.id.toUpperCase();var sub=[p.type,p.callsign&&p.reg?p.reg:''].filter(Boolean).join(' · ');
 return '<strong>'+esc(name)+'</strong><br>'+(p.onGround?'On the ground':(p.altFt!==null?esc(p.altFt.toLocaleString())+' ft':'Altitude unknown'))+
-(p.speedKt!==null?' · '+esc(p.speedKt)+' kt':'')+'<br><span class="muted">'+esc(p.country)+'</span>'+
+(p.speedKt!==null?' · '+esc(p.speedKt)+' kt':'')+(sub?'<br><span class="muted">'+esc(sub)+'</span>':'')+
 (p.callsign?'<br><a href="https://www.flightradar24.com/'+encodeURIComponent(p.callsign)+'" target="_blank" rel="noopener">Open on Flightradar24</a>':'')}
 async function load(){var b=map.getBounds(),mine=++seq;
 var q='s='+b.getSouth()+'&w='+b.getWest()+'&n='+b.getNorth()+'&e='+b.getEast();
 status.textContent='Loading planes…';
-try{var r=await fetch('/radar/planes?'+q,{credentials:'same-origin'});var j=await r.json();if(mine!==seq)return;
+try{var r=await fetch('/radar/planes?'+q,{credentials:'same-origin',signal:AbortSignal.timeout?AbortSignal.timeout(15000):undefined});var j=await r.json();if(mine!==seq)return;
 if(!r.ok){layer.clearLayers();status.textContent=j.error||'Radar unavailable.';return}
 layer.clearLayers();j.planes.forEach(function(p){L.marker([p.lat,p.lon],{icon:icon(p),title:p.callsign||p.id}).bindPopup(popup(p)).addTo(layer)});
-var t=new Date(j.time*1000).toLocaleTimeString('en-AU',{hour:'numeric',minute:'2-digit'});
-status.textContent=j.planes.length+' plane'+(j.planes.length===1?'':'s')+' · updated '+t+(j.remaining!==null?' · '+j.remaining+' requests left today':'')}
-catch(e){if(mine===seq)status.textContent="Couldn't load planes."}}
+var t=new Date(j.time).toLocaleTimeString('en-AU',{hour:'numeric',minute:'2-digit'});
+status.textContent=j.planes.length+' plane'+(j.planes.length===1?'':'s')+' · updated '+t}
+catch(e){if(mine===seq)status.textContent="Couldn't load planes. Retrying in a minute."}}
 var debounce=null;map.on('moveend',function(){clearTimeout(debounce);debounce=setTimeout(load,400)});
 function tick(){if(document.visibilityState==='visible')load()}
 load();timer=setInterval(tick,60000);document.addEventListener('visibilitychange',tick);})();`;
@@ -1314,7 +1314,7 @@ export const RadarPage: FC<{ role: Role }> = ({ role }) => (
       <span class="muted" id="radar-status">Loading map…</span>
     </div>
     <div id="radar-map" class="radar-map card" />
-    <p class="hint">Live-ish positions from the OpenSky Network, refreshed every minute. Tap a plane for details.</p>
+    <p class="hint">Live positions from adsb.lol's volunteer receivers, refreshed every minute. Tap a plane for details.</p>
     <script src={LEAFLET_JS} integrity={LEAFLET_JS_SRI} crossorigin="" />
     <script>{raw(RADAR_JS)}</script>
   </Layout>

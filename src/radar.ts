@@ -1,98 +1,88 @@
-// Live planes for the Radar tab, from the OpenSky Network API (https://openskynetwork.github.io/opensky-api/).
-// The browser can't call OpenSky directly (no CORS), so the Worker fetches and caches for it.
+// Live planes for the Radar page, from adsb.lol's free open API (https://api.adsb.lol/docs).
+// OpenSky was tried first but refuses connections from Cloudflare Workers (522 after ~20 s).
+// The browser can't call adsb.lol directly (no CORS), so the Worker fetches and caches for it.
 
 export interface Plane {
-  id: string; // ICAO 24-bit address
+  id: string; // ICAO 24-bit address (hex)
   callsign: string;
-  country: string;
+  reg: string; // registration, e.g. VH-EBA
+  type: string; // aircraft type code, e.g. A332
   lat: number;
   lon: number;
-  altFt: number | null; // barometric altitude, rounded to 100 ft
-  speedKt: number | null;
+  altFt: number | null; // barometric altitude; null on the ground or unknown
+  speedKt: number | null; // ground speed
   track: number | null; // degrees clockwise from north
   onGround: boolean;
 }
 
-export interface Box {
-  s: number;
-  w: number;
-  n: number;
-  e: number;
+export interface Area {
+  lat: number;
+  lon: number;
+  nm: number; // radius in nautical miles
 }
 
-type StateVector = (string | number | boolean | null)[];
+interface Aircraft {
+  hex?: string;
+  flight?: string;
+  r?: string;
+  t?: string;
+  alt_baro?: number | "ground";
+  gs?: number;
+  track?: number;
+  lat?: number;
+  lon?: number;
+}
 
-/** OpenSky's /states/all response to planes. Planes without a position are skipped. */
-export function parseStates(json: { time: number; states: StateVector[] | null }): Plane[] {
+/** adsb.lol's response to planes. Aircraft without a position are skipped. */
+export function parseAircraft(json: { now: number; ac?: Aircraft[] }): Plane[] {
   const out: Plane[] = [];
-  for (const s of json.states ?? []) {
-    const lon = s[5], lat = s[6];
-    if (typeof lat !== "number" || typeof lon !== "number") continue;
-    const alt = s[7], speed = s[9], track = s[10];
+  for (const a of json.ac ?? []) {
+    if (typeof a.lat !== "number" || typeof a.lon !== "number") continue;
     out.push({
-      id: String(s[0]),
-      callsign: typeof s[1] === "string" ? s[1].trim() : "",
-      country: String(s[2] ?? ""),
-      lat,
-      lon,
-      altFt: typeof alt === "number" ? Math.round((alt * 3.28084) / 100) * 100 : null,
-      speedKt: typeof speed === "number" ? Math.round(speed * 1.94384) : null,
-      track: typeof track === "number" ? Math.round(track) : null,
-      onGround: s[8] === true,
+      id: String(a.hex ?? ""),
+      callsign: (a.flight ?? "").trim(),
+      reg: a.r ?? "",
+      type: a.t ?? "",
+      lat: a.lat,
+      lon: a.lon,
+      altFt: typeof a.alt_baro === "number" ? a.alt_baro : null,
+      speedKt: typeof a.gs === "number" ? Math.round(a.gs) : null,
+      track: typeof a.track === "number" ? Math.round(a.track) : null,
+      onGround: a.alt_baro === "ground",
     });
   }
   return out;
 }
 
-/** Largest area fetched: OpenSky charges more credits for bigger boxes (400 sq deg = 3 credits). */
-const MAX_AREA = 400;
+/** adsb.lol's largest radius. */
+const MAX_NM = 250;
+/** Views much bigger than that would only show a small circle of planes, so ask to zoom in instead. */
+const TOO_FAR_NM = 400;
 
-/** The map's visible area, rounded outwards to whole degrees (so nearby views share a cache entry), or null. */
-export function boxFromQuery(q: { s?: string; w?: string; n?: string; e?: string }): Box | null {
-  const v = [q.s, q.w, q.n, q.e].map((x) => Number(x));
-  if (v.some((x) => !Number.isFinite(x))) return null;
-  const clamp = (x: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, x));
-  const s = clamp(Math.floor(v[0]), -90, 90), n = clamp(Math.ceil(v[2]), -90, 90);
-  const w = clamp(Math.floor(v[1]), -180, 180), e = clamp(Math.ceil(v[3]), -180, 180);
-  if (n <= s || e <= w || (n - s) * (e - w) > MAX_AREA) return null;
-  return { s, w, n, e };
-}
-
-export interface RadarEnv {
-  OPENSKY_CLIENT_ID?: string;
-  OPENSKY_CLIENT_SECRET?: string;
+/**
+ * The map's visible area as a centre and the radius reaching its corners. The centre is rounded to 0.5 deg
+ * and the radius up to 25 nm so nearby views share a cache entry.
+ */
+export function areaFromQuery(q: { s?: string; w?: string; n?: string; e?: string }): Area | null {
+  const [s, w, n, e] = [q.s, q.w, q.n, q.e].map((x) => Number(x));
+  if (![s, w, n, e].every(Number.isFinite) || n <= s || e <= w) return null;
+  const lat = Math.round(((s + n) / 2) * 2) / 2;
+  const lon = Math.round(((w + e) / 2) * 2) / 2;
+  const dLat = ((n - s) / 2) * 60;
+  const dLon = ((e - w) / 2) * 60 * Math.cos((lat * Math.PI) / 180);
+  const r = Math.hypot(dLat, dLon);
+  if (r > TOO_FAR_NM) return null;
+  return { lat, lon, nm: Math.min(MAX_NM, Math.max(25, Math.ceil(r / 25) * 25)) };
 }
 
 export interface RadarResult {
   planes: Plane[];
-  time: number; // OpenSky's timestamp (seconds)
-  remaining: number | null; // API credits left today, if OpenSky said
+  time: number; // adsb.lol's timestamp (ms)
 }
 
-// Per-isolate caches. Cloudflare's Cache API isn't available on workers.dev, and a minute-old radar is fine.
+// Per-isolate cache. Cloudflare's Cache API isn't available on workers.dev, and a minute-old radar is fine.
 const CACHE_MS = 60_000;
 const cache = new Map<string, { at: number; result: RadarResult }>();
-let token: { value: string; expires: number } | null = null;
-
-/** Optional free OpenSky account (API client) for a bigger daily allowance than anonymous access. */
-async function authHeader(env: RadarEnv): Promise<Record<string, string>> {
-  if (!env.OPENSKY_CLIENT_ID || !env.OPENSKY_CLIENT_SECRET) return {};
-  if (!token || token.expires < Date.now() + 30_000) {
-    const res = await fetch("https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "client_credentials",
-        client_id: env.OPENSKY_CLIENT_ID,
-        client_secret: env.OPENSKY_CLIENT_SECRET,
-      }),
-    });
-    if (!res.ok) return {}; // fall back to anonymous
-    const j = (await res.json()) as { access_token: string; expires_in: number };
-    token = { value: j.access_token, expires: Date.now() + j.expires_in * 1000 };
-  }
-  return { Authorization: `Bearer ${token.value}` };
-}
 
 export class RadarError extends Error {
   constructor(public status: number, message: string) {
@@ -100,17 +90,23 @@ export class RadarError extends Error {
   }
 }
 
-export async function fetchPlanes(env: RadarEnv, box: Box): Promise<RadarResult> {
-  const key = `${box.s},${box.w},${box.n},${box.e}`;
+export async function fetchPlanes(area: Area): Promise<RadarResult> {
+  const key = `${area.lat},${area.lon},${area.nm}`;
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < CACHE_MS) return hit.result;
-  const url = `https://opensky-network.org/api/states/all?lamin=${box.s}&lomin=${box.w}&lamax=${box.n}&lomax=${box.e}`;
-  const res = await fetch(url, { headers: await authHeader(env) });
-  if (res.status === 429) throw new RadarError(429, "Out of free radar requests for today. Try again tomorrow.");
-  if (!res.ok) throw new RadarError(502, `OpenSky said ${res.status}.`);
-  const json = (await res.json()) as { time: number; states: StateVector[] | null };
-  const left = res.headers.get("X-Rate-Limit-Remaining");
-  const result = { planes: parseStates(json), time: json.time, remaining: left === null ? null : Number(left) };
+  let res: Response;
+  try {
+    res = await fetch(`https://api.adsb.lol/v2/lat/${area.lat}/lon/${area.lon}/dist/${area.nm}`, {
+      headers: { "User-Agent": "cogs-tracker radar (personal, non-commercial)" },
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch {
+    throw new RadarError(504, "The plane data service didn't answer. Try again in a minute.");
+  }
+  if (res.status === 429) throw new RadarError(429, "Too many radar requests right now. Try again in a minute.");
+  if (!res.ok) throw new RadarError(502, `The plane data service said ${res.status}.`);
+  const json = (await res.json()) as { now: number; ac?: Aircraft[] };
+  const result = { planes: parseAircraft(json), time: json.now };
   cache.set(key, { at: Date.now(), result });
   if (cache.size > 50) cache.delete(cache.keys().next().value!);
   return result;
