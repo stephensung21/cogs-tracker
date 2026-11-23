@@ -106,7 +106,7 @@ button:disabled{opacity:.45;cursor:not-allowed}
 button.danger{color:var(--danger)}
 button.link{border:none;background:none;padding:0;color:var(--muted);text-decoration:underline;font-weight:500}
 form.inline{display:inline}
-.row>form.inline{display:flex}
+.row>form.inline,.section-head>form.inline,.top .right>form.inline,.short-banner .r>form.inline{display:flex}
 label{display:block;font-weight:700;font-size:13px;margin:16px 0 6px}
 input,select{font:inherit;width:100%;padding:11px 13px;border-radius:14px;border:1.5px solid var(--line);background:var(--bg);color:var(--ink)}
 input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 4px var(--accent-soft)}
@@ -294,7 +294,10 @@ type Nav = "home" | "txns" | "setup";
 
 export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Child; flash?: string | null }> = (p) => {
   const admin = p.role === "admin";
+  // The doctype keeps browsers in standards mode; without it forms get a 1em bottom margin (quirks mode).
   return (
+    <>
+    {raw("<!DOCTYPE html>")}
     <html lang="en">
       <head>
         <meta charset="utf-8" />
@@ -354,6 +357,7 @@ export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Chil
         <script>{raw(THEME_TOGGLE_JS)}</script>
       </body>
     </html>
+    </>
   );
 };
 
@@ -621,8 +625,8 @@ export const BillForm: FC<{
         </select>
         <label>Amount is</label>
         <div class="row" style="gap:18px">
-          <label style="margin:0;font-weight:600"><input type="radio" name="approximate" value="0" checked={!bill?.approximate} /> Exact</label>
-          <label style="margin:0;font-weight:600"><input type="radio" name="approximate" value="1" checked={!!bill?.approximate} /> Approximate (estimate)</label>
+          <label style="margin:0;font-weight:600;display:inline-flex;align-items:center;gap:7px"><input style="width:auto;margin:0" type="radio" name="approximate" value="0" checked={!bill?.approximate} /> Exact</label>
+          <label style="margin:0;font-weight:600;display:inline-flex;align-items:center;gap:7px"><input style="width:auto;margin:0" type="radio" name="approximate" value="1" checked={!!bill?.approximate} /> Approximate (estimate)</label>
         </div>
         <label for="amount">{editing && repeats ? "Amount this period" : "Amount to collect"}</label>
         <input id="amount" name="amount" required inputmode="decimal" value={bill?.amount ?? ""} placeholder="$200.00" />
