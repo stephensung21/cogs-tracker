@@ -125,7 +125,7 @@ never sent to the browser. Only transactions from the chosen Saver are stored.
 
 ## Radar (just for fun)
 
-The **Radar** tab shows live planes (starting over the Coral Sea, -16.52, 147.41) on an OpenStreetMap map, using
+The **plane icon** in the header (next to the light/dark toggle) opens a radar of live planes (starting over the Coral Sea, -16.52, 147.41) on an OpenStreetMap map, using
 the free [OpenSky Network](https://opensky-network.org) API through the Worker (`/radar/planes`, cached 60 s).
 Anonymous access allows about 400 requests a day, shared with other sites on Cloudflare's network. For about 10x
 more, create a free OpenSky account, add an API client, and set:

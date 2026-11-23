@@ -73,7 +73,9 @@ a.home:hover .logo-mark{animation:wiggle .6s ease}
 .top .right{margin-left:auto;display:flex;align-items:center;gap:8px}
 .chip{font-size:12px;font-weight:700;padding:4px 10px;border-radius:99px;background:var(--blue-soft);color:var(--blue);display:inline-flex;gap:5px;align-items:center}
 .icon-btn{border:none;background:none;color:var(--muted);padding:8px;border-radius:10px;cursor:pointer;display:inline-flex}
-.icon-btn:hover{background:var(--track);color:var(--ink)}
+.icon-btn:hover,.icon-btn.on{background:var(--track);color:var(--ink)}
+.view-chip{white-space:nowrap}
+@media (max-width:420px){.view-chip .chip-text{display:none}}
 
 /* bottom nav (phones, admin only) */
 .tabbar{display:none}
@@ -390,14 +392,16 @@ export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Chil
               <nav>
                 <a href="/" class={p.nav === "home" ? "on" : ""}>Bills</a>
                 <a href="/bills/archived" class={p.nav === "past" ? "on" : ""}>Past bills</a>
-                <a href="/radar" class={p.nav === "radar" ? "on" : ""}>Radar</a>
                 {admin && <a href="/transactions" class={p.nav === "txns" ? "on" : ""}>Payments</a>}
                 {admin && <a href="/setup" class={p.nav === "setup" ? "on" : ""}>Setup</a>}
               </nav>
               <div class="right">
                 {!admin && (
-                  <span class="chip"><UiIcon name="eye" size={14} /> View only</span>
+                  <span class="chip view-chip" title="View only"><UiIcon name="eye" size={14} /><span class="chip-text">View only</span></span>
                 )}
+                <a href="/radar" class={`icon-btn${p.nav === "radar" ? " on" : ""}`} title="Radar" aria-label="Radar">
+                  <UiIcon name="plane" />
+                </a>
                 <button type="button" class="icon-btn theme-btn" data-theme-toggle title="Switch light / dark" aria-label="Switch between light and dark mode">
                   <span class="moon"><UiIcon name="moon" /></span>
                   <span class="sun"><UiIcon name="sun" /></span>
@@ -417,7 +421,6 @@ export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Chil
           <nav class="tabbar" aria-label="Main">
             <a href="/" class={p.nav === "home" ? "on" : ""}><UiIcon name="bills" size={22} />Bills</a>
             <a href="/bills/archived" class={p.nav === "past" ? "on" : ""}><UiIcon name="clock" size={22} />Past</a>
-            <a href="/radar" class={p.nav === "radar" ? "on" : ""}><UiIcon name="plane" size={22} />Radar</a>
             {admin && <a href="/transactions" class={p.nav === "txns" ? "on" : ""}><UiIcon name="swap" size={22} />Payments</a>}
             {admin && <a href="/setup" class={p.nav === "setup" ? "on" : ""}><UiIcon name="gear" size={22} />Setup</a>}
           </nav>
