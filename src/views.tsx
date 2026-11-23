@@ -34,7 +34,7 @@ const CSS = `
   --t-mint:#DCF5E6;--t-mint-i:#1F8A55;--t-stone:#EEE9E1;--t-stone-i:#6E665B;
   --display:"Bricolage Grotesque",system-ui,sans-serif;
 }
-/* Dark theme: picked with the header toggle (data-theme on <html>), else follows the device. */
+/* Dark theme: only when picked with the header toggle (data-theme on <html>). Light is the default. */
 :root[data-theme=dark]{color-scheme:dark;
   --bg:#16130F;--bg-dot:#231F19;--card:#201C17;--ink:#F6EFE5;--muted:#A99F91;--line:#332D25;
   --accent-soft:#45261A;--ok-soft:#173A2B;--blue-soft:#1C2A4A;--warn-soft:#3A2E12;--warn:#F2C25B;--danger:#FF8A70;--track:#2D2820;
@@ -44,14 +44,6 @@ const CSS = `
   --t-mint:#163526;--t-mint-i:#6FD9A0;--t-stone:#2E2922;--t-stone-i:#BDB3A5;
 }
 :root[data-theme=light]{color-scheme:light}
-@media (prefers-color-scheme:dark){:root:not([data-theme=light]){
-  --bg:#16130F;--bg-dot:#231F19;--card:#201C17;--ink:#F6EFE5;--muted:#A99F91;--line:#332D25;
-  --accent-soft:#45261A;--ok-soft:#173A2B;--blue-soft:#1C2A4A;--warn-soft:#3A2E12;--warn:#F2C25B;--danger:#FF8A70;--track:#2D2820;
-  --shadow:0 1px 0 rgba(0,0,0,.3),0 10px 28px -14px rgba(0,0,0,.7);
-  --t-sun:#3B3013;--t-sun-i:#FFCF5A;--t-sky:#1B2948;--t-sky-i:#8DB2FF;--t-peach:#40251A;--t-peach-i:#FF9B6E;
-  --t-aqua:#123532;--t-aqua-i:#5FD6CF;--t-rose:#3E1E27;--t-rose-i:#FF8FA8;--t-lilac:#2A2145;--t-lilac-i:#B9A2FF;
-  --t-mint:#163526;--t-mint-i:#6FD9A0;--t-stone:#2E2922;--t-stone-i:#BDB3A5;
-}}
 .theme-btn .sun{display:none}
 :root[data-theme=dark] .theme-btn .sun{display:inline-flex}
 :root[data-theme=dark] .theme-btn .moon{display:none}
@@ -286,7 +278,7 @@ ${Array.from({ length: 8 }, (_, i) => `.stagger>*:nth-child(${i + 1}){animation-
 
 /** Runs in <head> so the page never flashes the wrong theme. Choice is saved per device. */
 const THEME_HEAD_JS = `(function(){var t;try{t=localStorage.getItem('theme')}catch(e){}
-if(t!=='light'&&t!=='dark')t=matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light';
+if(t!=='dark')t='light';
 document.documentElement.setAttribute('data-theme',t);
 if(t==='dark'){var m=document.querySelector('meta[name=theme-color]');if(m)m.setAttribute('content','#16130F')}})();`;
 
@@ -307,7 +299,7 @@ export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Chil
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-        <meta name="color-scheme" content="light dark" />
+        <meta name="color-scheme" content="light" />
         <meta name="theme-color" content="#FBF7F0" />
         <title>{p.title} · cogs.bills</title>
         <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
