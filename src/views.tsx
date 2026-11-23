@@ -17,6 +17,7 @@ import {
 import type { Role } from "./auth";
 import type { Bill, BillEntry, BillWithTotals, TxnWithAllocations } from "./db";
 import { billStatus, formatCents, percent } from "./matching";
+import { FREQUENCIES, FREQUENCY_LABELS, isFrequency } from "./periods";
 import type { UpAccount, UpWebhook } from "./up";
 
 const FONTS =
@@ -507,10 +508,21 @@ export const ArchivedPage: FC<{ role: Role; bills: BillWithTotals[] }> = ({ role
 );
 
 export const BillForm: FC<{
-  bill?: { id?: number; name: string; code: string; amount: string; due_date: string; icon?: string | null };
+  bill?: {
+    id?: number;
+    name: string;
+    code: string;
+    amount: string;
+    due_date: string;
+    icon?: string | null;
+    frequency?: string;
+    approximate?: boolean;
+    usual_amount?: string;
+  };
   error?: string | null;
 }> = ({ bill, error }) => {
   const editing = bill?.id !== undefined;
+  const repeats = isFrequency(bill?.frequency);
   const chosen = isBillIcon(bill?.icon) ? bill!.icon : "";
   return (
     <Layout title={editing ? "Edit bill" : "New bill"} role="admin" nav="home">
@@ -533,15 +545,36 @@ export const BillForm: FC<{
           ))}
         </div>
         <label for="name">Name</label>
-        <input id="name" name="name" required maxlength={80} value={bill?.name ?? ""} placeholder="Electricity – December" />
+        <input id="name" name="name" required maxlength={80} value={bill?.name ?? ""} placeholder="Electricity" />
         <label for="code">Reference code</label>
         <input id="code" name="code" required maxlength={18} value={bill?.code ?? ""} placeholder="ELEC"
           style="text-transform:uppercase;font-family:ui-monospace,Menlo,monospace;font-weight:700;letter-spacing:.06em" />
         <p class="hint">What your roommate types in the transfer reference. Short is best: ELEC, WIFI, RENT-DEC.</p>
-        <label for="amount">Amount to collect</label>
+        <label for="frequency">Repeats</label>
+        <select id="frequency" name="frequency">
+          <option value="" selected={!repeats}>Doesn't repeat</option>
+          {FREQUENCIES.map((f) => (
+            <option value={f} selected={bill?.frequency === f}>{FREQUENCY_LABELS[f]}</option>
+          ))}
+        </select>
+        <label>Amount is</label>
+        <div class="row" style="gap:18px">
+          <label style="margin:0;font-weight:600"><input type="radio" name="approximate" value="0" checked={!bill?.approximate} /> Exact</label>
+          <label style="margin:0;font-weight:600"><input type="radio" name="approximate" value="1" checked={!!bill?.approximate} /> Approximate (estimate)</label>
+        </div>
+        <label for="amount">{editing && repeats ? "Amount this period" : "Amount to collect"}</label>
         <input id="amount" name="amount" required inputmode="decimal" value={bill?.amount ?? ""} placeholder="$200.00" />
-        <label for="due">Due date <span class="muted" style="font-weight:500">(optional)</span></label>
+        {editing && repeats && (
+          <>
+            <p class="hint">Change this when the real bill arrives. Only this period changes.</p>
+            <label for="usual_amount">Usual amount</label>
+            <input id="usual_amount" name="usual_amount" inputmode="decimal" value={bill?.usual_amount ?? ""} placeholder="$200.00" />
+            <p class="hint">Used for next periods.</p>
+          </>
+        )}
+        <label for="due">Due date <span class="muted" style="font-weight:500">(required if the bill repeats)</span></label>
         <input id="due" name="due_date" type="date" value={bill?.due_date ?? ""} />
+        <p class="hint">Next periods are worked out from this date.</p>
         <div class="row" style="margin-top:20px">
           <button class="primary" type="submit">{editing ? "Save changes" : "Create bill"}</button>
         </div>
@@ -569,6 +602,7 @@ export const BillDetail: FC<{ role: Role; b: BillWithTotals; entries: BillEntry[
   role, b, entries, flash,
 }) => {
   const admin = role === "admin";
+  const stopsSeries = b.frequency !== null && !b.archived;
   const today = new Date().toISOString().slice(0, 10);
   return (
     <Layout title={b.name} role={role} nav="home" flash={flash}>
@@ -588,12 +622,16 @@ export const BillDetail: FC<{ role: Role; b: BillWithTotals; entries: BillEntry[
               <button type="submit">{b.marked_paid_at ? "Undo mark as paid" : "Mark as paid"}</button>
             </form>
             <a class="btn" href={`/bills/${b.id}/edit`}>Edit</a>
-            <form class="inline" method="post" action={`/bills/${b.id}/archive`}>
+            <form class="inline" method="post" action={`/bills/${b.id}/archive`}
+              onsubmit={stopsSeries ? `return confirm(${JSON.stringify(`This stops ${b.name} repeating. Continue?`)})` : undefined}>
               <input type="hidden" name="archived" value={b.archived ? "0" : "1"} />
               <button type="submit">{b.archived ? "Unarchive" : "Archive"}</button>
             </form>
             <form class="inline" method="post" action={`/bills/${b.id}/delete`}
-              onsubmit="return confirm('Delete this bill? Its payments go back to Unmatched and manual entries are removed.')">
+              onsubmit={`return confirm(${JSON.stringify(
+                (stopsSeries ? `This stops ${b.name} repeating. ` : "") +
+                  "Delete this bill? Its payments go back to Unmatched and manual entries are removed.",
+              )})`}>
               <button class="danger" type="submit">Delete</button>
             </form>
           </>

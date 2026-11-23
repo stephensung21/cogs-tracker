@@ -10,6 +10,7 @@ import {
   deleteManualEntry,
   deleteSetting,
   deleteTransactionsNotIn,
+  dismissShortfall,
   getBill,
   getTransaction,
   kindForAmount,
@@ -19,6 +20,7 @@ import {
   listBills,
   listTransactions,
   rematchUnassigned,
+  rollOver,
   resetToAutomatic,
   setAllocations,
   setBillArchived,
@@ -29,6 +31,7 @@ import {
   type Env,
 } from "./db";
 import { normalizeCode, parseDollars, parseSplits } from "./matching";
+import { isFrequency, sydneyDate } from "./periods";
 import { handleUpWebhook, syncRecent, upClient } from "./sync";
 import type { UpAccount, UpWebhook } from "./up";
 import {
@@ -84,7 +87,7 @@ app.post("/logout", (c) => {
 // ---------- everything below needs login; admin-only areas need the admin role ----------
 
 app.use("*", requireLogin);
-for (const path of ["/sync", "/bills/new", "/bills/:id/edit", "/bills/:id/archive", "/bills/:id/delete", "/bills/:id/paid", "/bills/:id/entries", "/entries/*", "/transactions", "/transactions/*", "/setup", "/setup/*"]) {
+for (const path of ["/sync", "/bills/new", "/bills/:id/edit", "/bills/:id/archive", "/bills/:id/delete", "/bills/:id/paid", "/bills/:id/entries", "/bills/:id/dismiss-shortfall", "/entries/*", "/transactions", "/transactions/*", "/setup", "/setup/*"]) {
   app.use(path, requireAdmin);
 }
 app.post("/bills", requireAdmin);
@@ -126,6 +129,9 @@ interface BillInput {
   amount: string;
   due_date: string;
   icon: string;
+  frequency: string;
+  approximate: boolean;
+  usual_amount: string;
 }
 
 async function validateBill(env: Env, f: BillInput, exceptId?: number) {
@@ -133,13 +139,17 @@ async function validateBill(env: Env, f: BillInput, exceptId?: number) {
   const code = normalizeCode(f.code);
   const amount_due = parseDollars(f.amount);
   const due_date = /^\d{4}-\d{2}-\d{2}$/.test(f.due_date) ? f.due_date : null;
+  const frequency = isFrequency(f.frequency) ? f.frequency : null;
   if (!name) return { error: "Give the bill a name." };
   if (!code) return { error: "Reference code needs at least one letter or number." };
   if (amount_due === null) return { error: "Amount should look like 120 or 120.50." };
+  if (frequency && !due_date) return { error: "A repeating bill needs a due date." };
+  const usual_amount = f.usual_amount.trim() ? parseDollars(f.usual_amount) : amount_due;
+  if (usual_amount === null) return { error: "Usual amount should look like 120 or 120.50." };
   if (await codeInUse(env.DB, code, exceptId))
     return { error: `Another active bill already uses ${code}. Archive it first or pick a different code.` };
   const icon = isBillIcon(f.icon) ? f.icon : null;
-  return { value: { name, code, amount_due, due_date, icon } };
+  return { value: { name, code, amount_due, due_date, icon, frequency, approximate: f.approximate, usual_amount } };
 }
 
 async function readBillForm(c: { req: { parseBody: () => Promise<Record<string, unknown>> } }): Promise<BillInput> {
@@ -150,6 +160,9 @@ async function readBillForm(c: { req: { parseBody: () => Promise<Record<string, 
     amount: String(f.amount ?? ""),
     due_date: String(f.due_date ?? ""),
     icon: String(f.icon ?? ""),
+    frequency: String(f.frequency ?? ""),
+    approximate: f.approximate === "1",
+    usual_amount: String(f.usual_amount ?? ""),
   };
 }
 
@@ -183,7 +196,17 @@ app.get("/bills/:id/edit", async (c) => {
   if (!b) return c.notFound();
   return c.html(
     <BillForm
-      bill={{ id: b.id, name: b.name, code: b.code, amount: (b.amount_due / 100).toFixed(2), due_date: b.due_date ?? "", icon: b.icon }}
+      bill={{
+        id: b.id,
+        name: b.name,
+        code: b.code,
+        amount: (b.amount_due / 100).toFixed(2),
+        due_date: b.due_date ?? "",
+        icon: b.icon,
+        frequency: b.frequency ?? "",
+        approximate: b.approximate === 1,
+        usual_amount: ((b.usual_amount ?? b.amount_due) / 100).toFixed(2),
+      }}
     />,
   );
 });
@@ -217,6 +240,11 @@ app.post("/bills/:id/delete", async (c) => {
 });
 
 // ---------- bill overrides (admin) ----------
+
+app.post("/bills/:id/dismiss-shortfall", async (c) => {
+  await dismissShortfall(c.env.DB, Number(c.req.param("id")));
+  return c.redirect(withMsg("/", "Warning dismissed."));
+});
 
 app.post("/bills/:id/paid", async (c) => {
   const id = Number(c.req.param("id"));
@@ -411,6 +439,12 @@ export default {
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
     ctx.waitUntil(
       (async () => {
+        try {
+          const n = await rollOver(env.DB, sydneyDate(new Date()));
+          if (n) console.log(`cron rollover: ${n} new period(s)`);
+        } catch (e) {
+          console.error("cron rollover failed", e);
+        }
         if (!(await getSetting(env.DB, "account_id"))) return;
         try {
           const r = await syncRecent(env, 14);
