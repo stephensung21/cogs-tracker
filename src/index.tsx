@@ -37,6 +37,7 @@ import {
 import { billStatus, normalizeCode, parseDollars, parseSplits } from "./matching";
 import { isFrequency, sydneyDate } from "./periods";
 import { checkReceipt } from "./receipts";
+import { boxFromQuery, fetchPlanes, RadarError } from "./radar";
 import { handleUpWebhook, syncRecent, upClient } from "./sync";
 import type { UpAccount, UpWebhook } from "./up";
 import {
@@ -45,6 +46,7 @@ import {
   BillForm,
   Dashboard,
   LoginPage,
+  RadarPage,
   SetupPage,
   TransactionEdit,
   TransactionsPage,
@@ -180,6 +182,21 @@ async function readBillForm(c: { req: { parseBody: () => Promise<Record<string, 
     usual_amount: String(f.usual_amount ?? ""),
   };
 }
+
+// ---------- radar (just for fun) ----------
+
+app.get("/radar", (c) => c.html(<RadarPage role={c.get("role")} />));
+
+app.get("/radar/planes", async (c) => {
+  const box = boxFromQuery(c.req.query());
+  if (!box) return c.json({ error: "Zoom in to see planes." }, 400);
+  try {
+    return c.json(await fetchPlanes(c.env, box));
+  } catch (e) {
+    const status = e instanceof RadarError ? e.status : 502;
+    return c.json({ error: e instanceof RadarError ? e.message : "Couldn't reach OpenSky." }, status as 429 | 502);
+  }
+});
 
 app.get("/bills/new", (c) => c.html(<BillForm />));
 

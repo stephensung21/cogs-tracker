@@ -165,6 +165,14 @@ ${["sun", "sky", "peach", "aqua", "rose", "lilac", "mint", "stone"]
 .site-dialog[open]{animation:dlg-pop .16s ease-out}
 @keyframes dlg-pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:none}}
 .danger-fill{background:var(--danger)!important;border-color:var(--danger)!important;color:#fff!important;box-shadow:none!important}
+.radar-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.radar-head h1{margin:0}
+.radar-map{height:calc(100dvh - 260px);min-height:360px;padding:0;overflow:hidden;z-index:0}
+.plane-icon{background:none;border:none}
+:root[data-theme=dark] .radar-map .leaflet-tile-pane{filter:invert(1) hue-rotate(180deg) brightness(.9) contrast(.9)}
+.leaflet-popup-content-wrapper,.leaflet-popup-tip{background:var(--card);color:var(--ink)}
+.leaflet-popup-content a{color:var(--accent)}
+.leaflet-container{font:inherit;background:var(--track)}
 .file-btn{cursor:pointer;margin:0}
 .receipt-thumb{display:inline-flex;flex-direction:column;gap:6px;margin:10px 4px 0;text-decoration:none;color:var(--muted);font-size:13px;font-weight:600}
 .receipt-thumb img{width:120px;height:120px;object-fit:cover;object-position:top;border-radius:14px;border:1px solid var(--line);box-shadow:var(--shadow);background:var(--card)}
@@ -348,9 +356,9 @@ window.siteAlert=function(t){open(t,'OK',false,false,null)};})();`;
 const COPY_JS = `document.addEventListener('click',e=>{const b=e.target.closest('[data-copy]');if(!b)return;e.preventDefault();
 navigator.clipboard&&navigator.clipboard.writeText(b.dataset.copy).then(()=>{const t=b.querySelector('.copy-label');if(t){const o=t.textContent;t.textContent='Copied!';setTimeout(()=>t.textContent=o,1200)}})});`;
 
-type Nav = "home" | "past" | "txns" | "setup";
+type Nav = "home" | "past" | "radar" | "txns" | "setup";
 
-export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Child; flash?: string | null }> = (p) => {
+export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Child; flash?: string | null; head?: Child }> = (p) => {
   const admin = p.role === "admin";
   // The doctype keeps browsers in standards mode; without it forms get a 1em bottom margin (quirks mode).
   return (
@@ -370,6 +378,7 @@ export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Chil
         <link rel="stylesheet" href={FONTS} />
         <style>{raw(CSS)}</style>
         <script>{raw(THEME_HEAD_JS)}</script>
+        {p.head}
       </head>
       <body class={p.role ? "has-tabbar" : ""}>
         {p.role && (
@@ -381,6 +390,7 @@ export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Chil
               <nav>
                 <a href="/" class={p.nav === "home" ? "on" : ""}>Bills</a>
                 <a href="/bills/archived" class={p.nav === "past" ? "on" : ""}>Past bills</a>
+                <a href="/radar" class={p.nav === "radar" ? "on" : ""}>Radar</a>
                 {admin && <a href="/transactions" class={p.nav === "txns" ? "on" : ""}>Payments</a>}
                 {admin && <a href="/setup" class={p.nav === "setup" ? "on" : ""}>Setup</a>}
               </nav>
@@ -407,6 +417,7 @@ export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Chil
           <nav class="tabbar" aria-label="Main">
             <a href="/" class={p.nav === "home" ? "on" : ""}><UiIcon name="bills" size={22} />Bills</a>
             <a href="/bills/archived" class={p.nav === "past" ? "on" : ""}><UiIcon name="clock" size={22} />Past</a>
+            <a href="/radar" class={p.nav === "radar" ? "on" : ""}><UiIcon name="plane" size={22} />Radar</a>
             {admin && <a href="/transactions" class={p.nav === "txns" ? "on" : ""}><UiIcon name="swap" size={22} />Payments</a>}
             {admin && <a href="/setup" class={p.nav === "setup" ? "on" : ""}><UiIcon name="gear" size={22} />Setup</a>}
           </nav>
@@ -1247,3 +1258,61 @@ function fmtDateTime(s: string): string {
     day: "numeric", month: "short", hour: "numeric", minute: "2-digit", timeZone: "Australia/Sydney",
   });
 }
+
+// ---------- radar (just for fun) ----------
+
+/** Leaflet 1.9.4 from unpkg, pinned with subresource integrity. */
+const LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+const LEAFLET_CSS_SRI = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
+const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
+const LEAFLET_JS_SRI = "sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=";
+
+/**
+ * Map + planes. Starts over the Coral Sea (-16.52, 147.41, zoom 7), loads planes for the visible area
+ * from /radar/planes, refreshes every 60 s while the tab is visible.
+ */
+// Map tiles: OpenStreetMap's standard tiles (no key; light personal use is within their tile policy).
+// Dark mode darkens them with a CSS filter rather than switching tile provider.
+const RADAR_JS = `(function(){var el=document.getElementById('radar-map');if(!el||!window.L)return;
+var map=L.map(el,{zoomControl:true,worldCopyJump:true}).setView([-16.52,147.41],7);
+var attr='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors · planes: <a href="https://opensky-network.org">OpenSky</a>';
+L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:attr,maxZoom:19}).addTo(map);
+var layer=L.layerGroup().addTo(map),status=document.getElementById('radar-status'),timer=null,seq=0;
+function esc(t){return String(t).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+function icon(p){var col=p.onGround?'var(--muted)':'var(--accent)';
+return L.divIcon({className:'plane-icon',iconSize:[26,26],iconAnchor:[13,13],
+html:'<svg viewBox="0 0 24 24" width="26" height="26" style="transform:rotate('+(p.track||0)+'deg)"><path fill="'+col+'" stroke="#fff" stroke-width="1" d="M12 2.5c.9 0 1.5.9 1.5 2v5l7 4v2l-7-2v4.5l2.2 1.8V21L12 20l-3.7 1v-1.2l2.2-1.8V13.5l-7 2v-2l7-4v-5c0-1.1.6-2 1.5-2Z"/></svg>'})}
+function popup(p){var name=p.callsign||p.id.toUpperCase();
+return '<strong>'+esc(name)+'</strong><br>'+(p.onGround?'On the ground':(p.altFt!==null?esc(p.altFt.toLocaleString())+' ft':'Altitude unknown'))+
+(p.speedKt!==null?' · '+esc(p.speedKt)+' kt':'')+'<br><span class="muted">'+esc(p.country)+'</span>'+
+(p.callsign?'<br><a href="https://www.flightradar24.com/'+encodeURIComponent(p.callsign)+'" target="_blank" rel="noopener">Open on Flightradar24</a>':'')}
+async function load(){var b=map.getBounds(),mine=++seq;
+var q='s='+b.getSouth()+'&w='+b.getWest()+'&n='+b.getNorth()+'&e='+b.getEast();
+status.textContent='Loading planes…';
+try{var r=await fetch('/radar/planes?'+q,{credentials:'same-origin'});var j=await r.json();if(mine!==seq)return;
+if(!r.ok){layer.clearLayers();status.textContent=j.error||'Radar unavailable.';return}
+layer.clearLayers();j.planes.forEach(function(p){L.marker([p.lat,p.lon],{icon:icon(p),title:p.callsign||p.id}).bindPopup(popup(p)).addTo(layer)});
+var t=new Date(j.time*1000).toLocaleTimeString('en-AU',{hour:'numeric',minute:'2-digit'});
+status.textContent=j.planes.length+' plane'+(j.planes.length===1?'':'s')+' · updated '+t+(j.remaining!==null?' · '+j.remaining+' requests left today':'')}
+catch(e){if(mine===seq)status.textContent="Couldn't load planes."}}
+var debounce=null;map.on('moveend',function(){clearTimeout(debounce);debounce=setTimeout(load,400)});
+function tick(){if(document.visibilityState==='visible')load()}
+load();timer=setInterval(tick,60000);document.addEventListener('visibilitychange',tick);})();`;
+
+export const RadarPage: FC<{ role: Role }> = ({ role }) => (
+  <Layout
+    title="Radar"
+    role={role}
+    nav="radar"
+    head={<link rel="stylesheet" href={LEAFLET_CSS} integrity={LEAFLET_CSS_SRI} crossorigin="" />}
+  >
+    <div class="radar-head">
+      <h1>Radar</h1>
+      <span class="muted" id="radar-status">Loading map…</span>
+    </div>
+    <div id="radar-map" class="radar-map card" />
+    <p class="hint">Live-ish positions from the OpenSky Network, refreshed every minute. Tap a plane for details.</p>
+    <script src={LEAFLET_JS} integrity={LEAFLET_JS_SRI} crossorigin="" />
+    <script>{raw(RADAR_JS)}</script>
+  </Layout>
+);

@@ -123,6 +123,18 @@ A daily cron (see `wrangler.toml`) re-syncs the last 14 days in case a webhook w
 The Up token can **read every account and transaction** cogs has. It only lives in Cloudflare secrets and is
 never sent to the browser. Only transactions from the chosen Saver are stored.
 
+## Radar (just for fun)
+
+The **Radar** tab shows live planes (starting over the Coral Sea, -16.52, 147.41) on an OpenStreetMap map, using
+the free [OpenSky Network](https://opensky-network.org) API through the Worker (`/radar/planes`, cached 60 s).
+Anonymous access allows about 400 requests a day, shared with other sites on Cloudflare's network. For about 10x
+more, create a free OpenSky account, add an API client, and set:
+
+```bash
+npx wrangler secret put OPENSKY_CLIENT_ID
+npx wrangler secret put OPENSKY_CLIENT_SECRET
+```
+
 ## Local development
 
 ```bash
@@ -149,5 +161,6 @@ src/views.tsx   HTML pages and styles (server-rendered, no frontend framework)
 src/art.tsx     logo, bill icons, illustrations, avatars (inline SVG)
 src/auth.ts     admin / viewer password login with a signed cookie
 src/receipts.ts payment screenshot checks (type, size)
+src/radar.ts    Radar tab: OpenSky fetch, cache and parsing
 migrations/     database schema
 ```
