@@ -26,3 +26,15 @@ sees the confirmation. No files are stored.
 ## Builder's calls
 - The bills pot on the home page counts only Collecting and Ready bills (a Used bill's money has left the pot).
 - Used gets its own badge and bar colour.
+
+## Addendum: payment screenshots and a Past bills tab (approved in conversation)
+
+- Optional payment screenshot per bill/period, stored in D1 (`receipts` table, one row per bill, BLOB).
+  Browser shrinks it first: max 1200px wide, WebP 0.8 (JPEG 0.8 where WebP encoding isn't supported).
+  Server accepts image/webp, image/jpeg, image/png up to 1 MB. Google Drive and R2 were rejected
+  (setup/token upkeep; card required).
+- Attach on the Mark as paid form; once paid, admin can add, replace or remove it. Undo keeps it.
+- Served only to logged-in users at `GET /bills/:id/receipt`; thumbnail on the bill page for both roles.
+- **Past bills** becomes its own tab (header nav and phone tab bar) for both admin and viewer, newest first,
+  each past bill linking to its screenshot when there is one.
+- Builder's calls: viewer gets a nav (Bills, Past bills) so they can reach the tab; the footer link stays.

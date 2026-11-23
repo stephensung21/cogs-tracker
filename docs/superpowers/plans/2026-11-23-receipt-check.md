@@ -33,3 +33,20 @@ required checkbox checked again on the server. No schema change.
 - [ ] Step 5: README matching table: money out → "Marks the bill Used; cogs marks it Paid after checking the receipt".
 - [ ] Step 6: Verify: `npm run typecheck`, `npm test`; local dev: POST paid=1 without tick → refused; with tick → Paid; screenshot bill page Used and Paid.
 - [ ] Step 7: Commit.
+
+## Part 2: screenshots + Past bills tab
+
+### Task 3: Receipt validation (pure)
+**Files:** Create `src/receipts.ts`, `test/receipts.test.ts`
+- Produces: `MAX_RECEIPT_BYTES = 1_000_000`, `RECEIPT_TYPES = ["image/webp","image/jpeg","image/png"]`,
+  `checkReceipt(type: string, size: number): string | null` (error message or null).
+- [ ] Test: webp 150 KB → null; 0 bytes → "That file is empty."; 1_000_001 bytes → "Screenshot is too big (max 1 MB)."; application/pdf → "Upload a screenshot (an image)."
+- [ ] RED, implement, GREEN, commit.
+
+### Task 4: Storage, routes, views
+**Files:** Create `migrations/0005_receipts.sql`; modify `src/db.ts`, `src/index.tsx`, `src/views.tsx`, `src/art.tsx`, `README.md`
+- Migration: `receipts(bill_id INTEGER PRIMARY KEY REFERENCES bills(id) ON DELETE CASCADE, mime TEXT NOT NULL, data BLOB NOT NULL, size INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))`.
+- db: `saveReceipt(db, billId, mime, bytes: ArrayBuffer)`, `getReceipt(db, billId): {mime, data: Uint8Array} | null`, `deleteReceipt(db, billId)`; `deleteBill` also deletes the receipt; `BILL_TOTALS_SQL` adds `has_receipt`.
+- Routes: `POST /bills/:id/paid` (multipart, optional `receipt`), `POST /bills/:id/receipt` and `POST /bills/:id/receipt/delete` (admin), `GET /bills/:id/receipt` (any logged-in role, `Cache-Control: private`).
+- Views: file input with client-side shrink script; thumbnail + admin replace/remove on paid bills; `Nav` gains `"past"`; nav + tab bar for both roles; Past bills page newest first with "View payment screenshot" links.
+- [ ] Verify: typecheck, tests, local upload/serve/remove, viewer can view image but can't upload (403/redirect), screenshots of bill page and Past bills tab (desktop + phone width). Commit.
