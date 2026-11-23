@@ -140,8 +140,9 @@ input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:0 0 
 @keyframes jarfill{from{transform:translateY(80px)}to{transform:none}}
 
 /* bill cards */
-.bill{display:block;text-decoration:none;position:relative;transition:transform .15s ease,box-shadow .15s}
-a.bill:hover{transform:translateY(-2px) rotate(-.25deg)}
+.bill{display:block;text-decoration:none;position:relative;transition:box-shadow .18s ease,border-color .18s ease}
+a.bill:hover,a.bill:focus-visible{outline:none;border-color:color-mix(in srgb,var(--accent) 45%,var(--line));
+  box-shadow:var(--shadow),0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent),0 0 22px color-mix(in srgb,var(--accent) 22%,transparent)}
 .bill-top{display:flex;gap:13px;align-items:center}
 .bill-title{flex:1;min-width:0}
 .bill-name{font-family:var(--display);font-weight:700;font-size:18px;line-height:1.2;letter-spacing:-.01em}
