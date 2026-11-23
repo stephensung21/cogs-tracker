@@ -158,6 +158,10 @@ ${["sun", "sky", "peach", "aqua", "rose", "lilac", "mint", "stone"]
 .badge{font-size:12px;font-weight:800;padding:4px 10px;border-radius:99px;background:var(--track);color:var(--muted);white-space:nowrap;position:relative}
 .badge.funded{background:var(--blue-soft);color:var(--blue)}
 .badge.paid{background:var(--ok-soft);color:var(--ok)}
+.mark-paid{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:space-between}
+.mark-paid .check{display:inline-flex;align-items:center;gap:9px;margin:0;font-weight:650}
+.mark-paid .check input{width:20px;height:20px;margin:0;accent-color:var(--ok)}
+.badge.used{background:var(--t-peach);color:var(--t-peach-i)}
 .badge.funded::after,.badge.paid::after{content:"✦";position:absolute;top:-9px;right:-6px;font-size:13px;color:var(--sun);animation:twinkle 1.8s ease-in-out infinite}
 
 .bar{height:16px;border-radius:99px;background:var(--track);overflow:hidden;margin:16px 0 10px;position:relative}
@@ -167,6 +171,7 @@ ${["sun", "sky", "peach", "aqua", "rose", "lilac", "mint", "stone"]
 .bar.open>span{animation:grow 1s cubic-bezier(.2,.8,.2,1) both,stripes 1.2s linear infinite}
 .bar.funded>span{background-color:var(--blue)}
 .bar.paid>span{background-color:var(--ok);background-image:none}
+.bar.used>span{background-color:var(--t-peach-i);background-image:none}
 .bar>span::after{content:"";position:absolute;right:3px;top:3px;width:10px;height:10px;border-radius:50%;background:rgba(255,255,255,.75)}
 .bar>span[style*="width:0%"]::after{display:none}
 @keyframes grow{from{width:0}}
@@ -392,7 +397,7 @@ function payerNames(b: BillWithTotals): string[] {
 
 const StatusBadge: FC<{ b: BillWithTotals }> = ({ b }) => {
   const s = billStatus(b.collected, b.amount_due, b.paid_out, b.marked_paid_at);
-  const label = s === "paid" ? "Paid" : s === "funded" ? "Ready to pay" : "Collecting";
+  const label = s === "paid" ? "Paid" : s === "used" ? "Used" : s === "funded" ? "Ready to pay" : "Collecting";
   return <span class={`badge ${s}`}>{label}</span>;
 };
 
@@ -410,7 +415,8 @@ export const BillCard: FC<{ b: BillWithTotals; link?: boolean }> = ({ b, link = 
             <span class="code">{b.code}</span>
             {isFrequency(b.frequency) && <span class="tag-repeat">Repeats {FREQUENCY_LABELS[b.frequency].toLowerCase()}</span>}
             {!link && b.period_start && b.due_date && <span>{fmtRange(b.period_start, b.due_date)}</span>}
-            {s === "paid" && (b.paid_at || b.marked_paid_at) ? <span>Paid {fmtDate((b.paid_at || b.marked_paid_at)!)}</span> : b.due_date ? <span>Due {fmtDate(b.due_date)}</span> : null}
+            {s === "paid" && b.marked_paid_at ? <span>Paid {fmtDate(b.marked_paid_at)}</span>
+              : s === "used" && b.paid_at ? <span>Taken out {fmtDate(b.paid_at)}</span> : b.due_date ? <span>Due {fmtDate(b.due_date)}</span> : null}
           </div>
         </div>
         <StatusBadge b={b} />
@@ -467,11 +473,14 @@ const ShortBanner: FC<{ bills: BillWithTotals[]; admin: boolean }> = ({ bills, a
 );
 
 const Hero: FC<{ bills: BillWithTotals[] }> = ({ bills }) => {
-  const unpaid = bills.filter((b) => billStatus(b.collected, b.amount_due, b.paid_out, b.marked_paid_at) !== "paid");
+  // Used bills' money has already left the account, so the pot only counts bills still collecting or ready.
+  const statuses = bills.map((b) => billStatus(b.collected, b.amount_due, b.paid_out, b.marked_paid_at));
+  const unpaid = bills.filter((_, i) => statuses[i] === "open" || statuses[i] === "funded");
+  const used = statuses.filter((st) => st === "used").length;
   const collected = unpaid.reduce((s, b) => s + Math.min(b.collected, b.amount_due), 0);
   const due = unpaid.reduce((s, b) => s + b.amount_due, 0);
   const ready = unpaid.filter((b) => b.collected >= b.amount_due).length;
-  const paid = bills.length - unpaid.length;
+  const paid = statuses.filter((st) => st === "paid").length;
   const pct = due ? percent(collected, due) : bills.length ? 100 : 0;
   return (
     <div class="card hero">
@@ -488,6 +497,7 @@ const Hero: FC<{ bills: BillWithTotals[] }> = ({ bills }) => {
         </div>
         <div class="hero-stats">
           {ready > 0 && <span class="pill blue">{ready} ready to pay</span>}
+          {used > 0 && <span class="pill">{used} waiting for receipt check</span>}
           {paid > 0 && <span class="pill ok">{paid} paid</span>}
           <span class="pill">{unpaid.length} open</span>
         </div>
@@ -675,19 +685,25 @@ export const BillDetail: FC<{ role: Role; b: BillWithTotals; entries: BillEntry[
     <Layout title={b.name} role={role} nav="home" flash={flash}>
       <a class="btn" href="/" style="margin-bottom:14px"><UiIcon name="back" size={16} />Bills</a>
       <BillCard b={b} link={false} />
-      {b.marked_paid_at && (
-        <p class="hint" style="margin:8px 4px 0">Marked as paid by hand on {fmtDate(b.marked_paid_at)}.</p>
-      )}
+      {b.marked_paid_at ? (
+        <p class="hint" style="margin:8px 4px 0;color:var(--ok);font-weight:700">✓ Receipt checked and paid · {fmtDate(b.marked_paid_at)}</p>
+      ) : b.paid_out > 0 && b.paid_at ? (
+        <p class="hint" style="margin:8px 4px 0">
+          {formatCents(b.paid_out)} taken out on {fmtDate(b.paid_at)}. Waiting for cogs to check the receipt.
+        </p>
+      ) : null}
       <div class="row" style="margin-top:12px">
         <button type="button" data-copy={b.code} title="Copy reference code">
           <UiIcon name="copy" size={16} /><span class="copy-label">Copy code {b.code}</span>
         </button>
         {admin && (
           <>
-            <form class="inline" method="post" action={`/bills/${b.id}/paid`}>
-              <input type="hidden" name="paid" value={b.marked_paid_at ? "0" : "1"} />
-              <button type="submit">{b.marked_paid_at ? "Undo mark as paid" : "Mark as paid"}</button>
-            </form>
+            {b.marked_paid_at && (
+              <form class="inline" method="post" action={`/bills/${b.id}/paid`}>
+                <input type="hidden" name="paid" value="0" />
+                <button type="submit">Undo mark as paid</button>
+              </form>
+            )}
             <a class="btn" href={`/bills/${b.id}/edit`}>Edit</a>
             <form class="inline" method="post" action={`/bills/${b.id}/archive`}
               onsubmit={stopsSeries ? `return confirm(${JSON.stringify(`This stops ${b.name} repeating. Continue?`)})` : undefined}>
@@ -705,6 +721,16 @@ export const BillDetail: FC<{ role: Role; b: BillWithTotals; entries: BillEntry[
         )}
       </div>
 
+      {admin && !b.marked_paid_at && (
+        <form class="card mark-paid" method="post" action={`/bills/${b.id}/paid`} style="margin-top:14px">
+          <input type="hidden" name="paid" value="1" />
+          <label class="check">
+            <input type="checkbox" name="checked" value="1" required />
+            Receipt has been checked and paid
+          </label>
+          <button class="primary" type="submit">Mark as paid</button>
+        </form>
+      )}
       {admin && (
         <details class="card" style="margin-top:14px">
           <summary><strong>Add a manual entry</strong> <span class="muted">· cash, another account, a correction</span></summary>

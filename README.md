@@ -31,7 +31,7 @@ Cogs can correct anything the automatic matching gets wrong:
   in Unmatched as "not assigned".
 - **Switch** a payment between *towards the bill* and *bill payment* (marks the bill paid).
 - **Manual entries** on a bill page: cash or payments from another account, with who / date / note. Deletable.
-- **Mark as paid** by hand (e.g. paid by card from another account), and undo it.
+- **Mark as paid** after ticking "Receipt has been checked and paid" (also works when paid from another account), and undo it.
 - **Ignore** a payment, or **Reset to automatic** to throw away manual changes and match by reference again.
 
 Anything set by hand shows a **MANUAL** tag (the roommate can see it) and is never changed by syncs or webhooks.
@@ -51,7 +51,7 @@ Set a bill up once and it repeats: pick **Repeats** (weekly, fortnightly, monthl
   change **Amount this period**: only that period changes and the tag goes away. **Usual amount** is what the
   next periods start with.
 - A transfer counts towards the period it was **made in** (Sydney time), even if Up delivers it after rollover.
-- Money **out** with the code marks the **oldest unpaid** period paid (cogs often pays after the next period started).
+- Money **out** with the code marks the **oldest** period with no money out yet as Used (cogs often pays after the next period started).
 - A big **⚠️ Not fully paid** banner at the top of the Bills page lists finished periods that collected less than
   their amount. It clears when the period is made up (reassign a payment or add a manual entry) or the admin
   dismisses it.
@@ -64,7 +64,7 @@ Periods roll over on Bills page load, before every sync or webhook, and in the d
 | Transaction on the watched account | Result |
 | --- | --- |
 | Money in, reference contains a bill code as a word (`ELEC`, `elec dec`, `Bills: ELEC`) | Counts towards that bill (for a repeating bill: the period the transfer was made in) |
-| Money out with a bill code | Marks the bill Paid (for a repeating bill: the oldest unpaid period) |
+| Money out with a bill code | Marks the bill **Used** (for a repeating bill: the oldest period with no money out yet). It only becomes **Paid** when cogs ticks "Receipt has been checked and paid" on the bill page |
 | No code, unknown code, or two codes at once | Goes to Unmatched |
 
 The reference is checked first, then Up's raw text, then the description. `ELECTRIC` does **not** match `ELEC`.

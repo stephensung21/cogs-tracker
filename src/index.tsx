@@ -255,9 +255,14 @@ app.post("/bills/:id/dismiss-shortfall", async (c) => {
 app.post("/bills/:id/paid", async (c) => {
   const id = Number(c.req.param("id"));
   if (!(await getBill(c.env.DB, id))) return c.notFound();
-  const paid = (await c.req.parseBody()).paid === "1";
+  const form = await c.req.parseBody();
+  const paid = form.paid === "1";
+  // The form's checkbox is required, but check again here in case it's bypassed.
+  if (paid && form.checked !== "1") {
+    return c.redirect(withMsg(`/bills/${id}`, "Tick “Receipt has been checked and paid” first."));
+  }
   await setMarkedPaid(c.env.DB, id, paid);
-  return c.redirect(withMsg(`/bills/${id}`, paid ? "Marked as paid." : "No longer marked as paid."));
+  return c.redirect(withMsg(`/bills/${id}`, paid ? "Marked as paid. Receipt checked." : "No longer marked as paid."));
 });
 
 app.post("/bills/:id/entries", async (c) => {
