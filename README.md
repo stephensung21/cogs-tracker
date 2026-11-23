@@ -38,12 +38,33 @@ Anything set by hand shows a **MANUAL** tag (the roommate can see it) and is nev
 Under the hood each bill's total comes from the `allocations` table: one row per "this much of this payment
 counts towards this bill", with manual entries being allocations that have no bank transaction.
 
+## Recurring bills
+
+Set a bill up once and it repeats: pick **Repeats** (weekly, fortnightly, monthly or quarterly) and a due date.
+
+- Each **period** runs from the day after the previous due date up to and including its due date. The day after a
+  due date, that period moves to Past bills and the next one starts with the same code, so the roommate keeps
+  using `ELEC` forever. Missed periods (nobody opened the site for a while) are all created, none skipped.
+- **Clean slate**: each period stands alone. Extra money shows as "$20 extra" on that period and isn't carried
+  forward; a shortfall isn't carried forward either.
+- **Approximate** amounts show as `~$180` with an *estimate* tag. When the real bill arrives, edit the period and
+  change **Amount this period**: only that period changes and the tag goes away. **Usual amount** is what the
+  next periods start with.
+- A transfer counts towards the period it was **made in** (Sydney time), even if Up delivers it after rollover.
+- Money **out** with the code marks the **oldest unpaid** period paid (cogs often pays after the next period started).
+- A big **⚠️ Not fully paid** banner at the top of the Bills page lists finished periods that collected less than
+  their amount. It clears when the period is made up (reassign a payment or add a manual entry) or the admin
+  dismisses it.
+- Archiving or deleting the current period stops the bill repeating.
+
+Periods roll over on Bills page load, before every sync or webhook, and in the daily cron.
+
 ## How matching works
 
 | Transaction on the watched account | Result |
 | --- | --- |
-| Money in, reference contains a bill code as a word (`ELEC`, `elec dec`, `Bills: ELEC`) | Counts towards that bill |
-| Money out with a bill code | Marks the bill Paid |
+| Money in, reference contains a bill code as a word (`ELEC`, `elec dec`, `Bills: ELEC`) | Counts towards that bill (for a repeating bill: the period the transfer was made in) |
+| Money out with a bill code | Marks the bill Paid (for a repeating bill: the oldest unpaid period) |
 | No code, unknown code, or two codes at once | Goes to Unmatched |
 
 The reference is checked first, then Up's raw text, then the description. `ELECTRIC` does **not** match `ELEC`.
@@ -115,6 +136,7 @@ src/index.tsx   routes (pages, webhook endpoint, daily cron)
 src/sync.ts     webhook handling and sync
 src/up.ts       Up API client and signature check
 src/matching.ts reference to bill matching, money helpers (pure, unit-tested)
+src/periods.ts  recurring-bill date maths and period picking (pure, unit-tested)
 src/db.ts       D1 queries
 src/views.tsx   HTML pages and styles (server-rendered, no frontend framework)
 src/art.tsx     logo, bill icons, illustrations, avatars (inline SVG)
