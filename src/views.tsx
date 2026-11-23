@@ -158,6 +158,13 @@ ${["sun", "sky", "peach", "aqua", "rose", "lilac", "mint", "stone"]
 .badge{font-size:12px;font-weight:800;padding:4px 10px;border-radius:99px;background:var(--track);color:var(--muted);white-space:nowrap;position:relative}
 .badge.funded{background:var(--blue-soft);color:var(--blue)}
 .badge.paid{background:var(--ok-soft);color:var(--ok)}
+.site-dialog{border:1px solid var(--line);border-radius:22px;padding:22px;max-width:min(420px,calc(100vw - 32px));
+  background:var(--card);color:var(--ink);box-shadow:0 24px 60px -20px rgba(0,0,0,.45)}
+.site-dialog::backdrop{background:rgba(20,16,12,.45);backdrop-filter:blur(2px)}
+.site-dialog p{margin:0 0 18px;font-size:16px;line-height:1.45;font-weight:550}
+.site-dialog[open]{animation:dlg-pop .16s ease-out}
+@keyframes dlg-pop{from{opacity:0;transform:scale(.96)}to{opacity:1;transform:none}}
+.danger-fill{background:var(--danger)!important;border-color:var(--danger)!important;color:#fff!important;box-shadow:none!important}
 .file-btn{cursor:pointer;margin:0}
 .receipt-thumb{display:inline-flex;flex-direction:column;gap:6px;margin:10px 4px 0;text-decoration:none;color:var(--muted);font-size:13px;font-weight:600}
 .receipt-thumb img{width:120px;height:120px;object-fit:cover;object-position:top;border-radius:14px;border:1px solid var(--line);box-shadow:var(--shadow);background:var(--card)}
@@ -306,7 +313,7 @@ var m=document.querySelector('meta[name=theme-color]');if(m)m.setAttribute('cont
  */
 const SHRINK_JS = `document.addEventListener('change',async function(e){var inp=e.target;if(!inp.matches||!inp.matches('input[data-shrink]'))return;
 var f=inp.files&&inp.files[0];if(!f)return;var form=inp.closest('form');var lbl=form.querySelector('[data-file-label]');
-var btns=form.querySelectorAll('button[type=submit]');var say=function(t){if(lbl)lbl.textContent=t;else if(t)alert(t)};
+var btns=form.querySelectorAll('button[type=submit]');var say=function(t){if(lbl)lbl.textContent=t;else if(t)window.siteAlert(t)};
 var done=function(ok,msg){btns.forEach(function(b){b.disabled=false});if(!ok){inp.value='';say(msg);return}
 if(lbl)lbl.textContent='Screenshot added ('+Math.max(1,Math.round(inp.files[0].size/1024))+' KB)';if(inp.hasAttribute('data-autosubmit'))form.submit()};
 if(['image/png','image/jpeg','image/webp','image/gif','image/bmp','image/heic','image/heif'].indexOf(f.type)<0){done(false,'Use a PNG, JPEG or WebP screenshot.');return}
@@ -321,6 +328,22 @@ if(b&&b.size<f.size){var dt=new DataTransfer();dt.items.add(new File([b],'screen
 }catch(err){}
 var g=inp.files[0];if(['image/png','image/jpeg','image/webp'].indexOf(g.type)<0||g.size>1000000){done(false,"Couldn't shrink that one. Try a smaller PNG or JPEG screenshot.");return}
 done(true);});`;
+
+/**
+ * In-page confirm dialog (instead of the browser's confirm()), so it matches the site's theme.
+ * A form with data-confirm="message" asks first; data-confirm-ok sets the button text, data-confirm-danger makes it red.
+ * window.siteAlert(message) shows a one-button notice.
+ */
+const DIALOG_JS = `(function(){var d=document.getElementById('site-dialog');if(!d)return;var msg=d.querySelector('[data-msg]'),
+ok=d.querySelector('[data-ok]'),cancel=d.querySelector('[data-cancel]'),then=null;
+function open(text,okText,danger,showCancel,cb){msg.textContent=text;ok.textContent=okText||'OK';ok.classList.toggle('danger-fill',!!danger);
+cancel.hidden=!showCancel;then=cb;d.returnValue='';d.showModal();(showCancel?cancel:ok).focus()}
+d.addEventListener('close',function(){var cb=then;then=null;if(cb&&d.returnValue==='ok')cb()});
+d.addEventListener('click',function(e){if(e.target===d)d.close('cancel')});
+document.addEventListener('submit',function(e){var f=e.target;if(!f.hasAttribute||!f.hasAttribute('data-confirm')||f.dataset.confirmed)return;
+e.preventDefault();open(f.getAttribute('data-confirm'),f.getAttribute('data-confirm-ok'),f.hasAttribute('data-confirm-danger'),true,
+function(){f.dataset.confirmed='1';if(f.requestSubmit)f.requestSubmit();else f.submit()})},true);
+window.siteAlert=function(t){open(t,'OK',false,false,null)};})();`;
 
 const COPY_JS = `document.addEventListener('click',e=>{const b=e.target.closest('[data-copy]');if(!b)return;e.preventDefault();
 navigator.clipboard&&navigator.clipboard.writeText(b.dataset.copy).then(()=>{const t=b.querySelector('.copy-label');if(t){const o=t.textContent;t.textContent='Copied!';setTimeout(()=>t.textContent=o,1200)}})});`;
@@ -388,6 +411,16 @@ export const Layout: FC<{ title: string; role?: Role; nav?: Nav; children?: Chil
             {admin && <a href="/setup" class={p.nav === "setup" ? "on" : ""}><UiIcon name="gear" size={22} />Setup</a>}
           </nav>
         )}
+        <dialog id="site-dialog" class="site-dialog">
+          <form method="dialog">
+            <p data-msg></p>
+            <div class="row" style="justify-content:flex-end">
+              <button value="cancel" data-cancel>Cancel</button>
+              <button value="ok" class="primary" data-ok>OK</button>
+            </div>
+          </form>
+        </dialog>
+        <script>{raw(DIALOG_JS)}</script>
         <script>{raw(COPY_JS)}</script>
         <script>{raw(SHRINK_JS)}</script>
         <script>{raw(THEME_TOGGLE_JS)}</script>
@@ -758,7 +791,7 @@ export const BillDetail: FC<{ role: Role; b: BillWithTotals; entries: BillEntry[
           </form>
           {b.has_receipt === 1 && (
             <form class="inline" method="post" action={`/bills/${b.id}/receipt/delete`}
-              onsubmit="return confirm('Remove the payment screenshot?')">
+              data-confirm="Remove the payment screenshot?" data-confirm-ok="Remove" data-confirm-danger>
               <button type="submit" class="danger">Remove screenshot</button>
             </form>
           )}
@@ -783,15 +816,15 @@ export const BillDetail: FC<{ role: Role; b: BillWithTotals; entries: BillEntry[
             )}
             <a class="btn" href={`/bills/${b.id}/edit`}>Edit</a>
             <form class="inline" method="post" action={`/bills/${b.id}/archive`}
-              onsubmit={stopsSeries ? `return confirm(${JSON.stringify(`This stops ${b.name} repeating. Continue?`)})` : undefined}>
+              data-confirm={stopsSeries && !b.archived ? `This stops ${b.name} repeating. Archive it?` : undefined}
+              data-confirm-ok="Archive">
               <input type="hidden" name="archived" value={b.archived ? "0" : "1"} />
               <button type="submit">{b.archived ? "Unarchive" : "Archive"}</button>
             </form>
             <form class="inline" method="post" action={`/bills/${b.id}/delete`}
-              onsubmit={`return confirm(${JSON.stringify(
-                (stopsSeries ? `This stops ${b.name} repeating. ` : "") +
-                  "Delete this bill? Its payments go back to Unmatched and manual entries are removed.",
-              )})`}>
+              data-confirm={(stopsSeries ? `This stops ${b.name} repeating. ` : "") +
+                "Delete this bill? Its payments go back to Unmatched and manual entries are removed."}
+              data-confirm-ok="Delete" data-confirm-danger>
               <button class="danger" type="submit">Delete</button>
             </form>
           </>
@@ -881,7 +914,7 @@ export const BillDetail: FC<{ role: Role; b: BillWithTotals; entries: BillEntry[
                         <a class="mini" href={`/transactions/${encodeURIComponent(e.txn_id)}`}>Edit</a>
                       ) : (
                         <form class="inline" method="post" action={`/entries/${e.id}/delete`}
-                          onsubmit="return confirm('Delete this manual entry?')">
+                          data-confirm="Delete this manual entry?" data-confirm-ok="Delete" data-confirm-danger>
                           <button class="link mini">Delete</button>
                         </form>
                       )}
@@ -1149,7 +1182,7 @@ export const SetupPage: FC<{
                   </td>
                   <td style="text-align:right">
                     <form class="inline" method="post" action={`/setup/webhook/${encodeURIComponent(w.id)}/delete`}
-                      onsubmit="return confirm('Delete this webhook from Up?')">
+                      data-confirm="Delete this webhook from Up?" data-confirm-ok="Delete" data-confirm-danger>
                       <button class="danger">Delete</button>
                     </form>
                   </td>
